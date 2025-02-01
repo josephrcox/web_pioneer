@@ -16,10 +16,11 @@
 		<h2 class="title text-xl">{e.name}</h2>
 		<p class="text-md underline opacity-70 mb-4">Employee number: {e.id}</p>
 		<p>
-			Job: <span class="{getJobColor(e.job)} px-1 text-white">{e.job}</span>
+			Job: <span class={getJobColor(e.job)}>{e.job}</span>
 		</p>
 		<p>Salary: {numberToMoney(e.salary)} per week</p>
 		<p>XP: {numberWithCommas(e.xp)} out of 10,000</p>
+		<p>Happiness: {e.happiness}%</p>
 	</div>
 	<form method="dialog" class="modal-backdrop">
 		<button on:click={closeModal}>close</button>
@@ -27,8 +28,4 @@
 </div>
 
 <style>
-	.modal-backdrop {
-		background-color: rgba(0, 0, 0, 0);
-		opacity: 0;
-	}
 </style>

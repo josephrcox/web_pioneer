@@ -5,7 +5,12 @@
 	import { JOB_TYPE, type employee } from './objects/types';
 	// @ts-ignore
 	import { candidates, g } from './store';
-	import { generateEmployeeName } from './utils';
+	import {
+		generateEmployeeName,
+		getJobColor,
+		numberToMoney,
+		numberWithCommas,
+	} from './utils';
 
 	export let isOpen = false;
 	let isLoading = false;
@@ -93,7 +98,7 @@
 		try {
 			searchTimeout = setTimeout(() => {
 				// Generate 3 new workers
-				const newWorkers = Array(3)
+				const newWorkers = Array(4)
 					.fill(null)
 					.map((_, i) => generateWorker(i + 1));
 
@@ -120,62 +125,71 @@
 
 {#if isOpen}
 	<div class="modal modal-open">
-		<div class="modal-box">
-			<h3 class="title text-xl mb-4">Available Candidates</h3>
-			<div class="candidates-list space-y-4 mb-4 max-h-96 overflow-y-auto">
-				{#if isLoading}
-					<div class="flex flex-col items-center justify-center py-8">
+		<div class="modal-box min-w-[70%]">
+			<h3 class="title text-xl mb-8">Available Candidates</h3>
+			<div class="candidates-container w-full overflow-x-auto">
+				<div class="candidates-list grid grid-cols-2 gap-4 pb-4">
+					{#if isLoading}
 						<div
-							class="loading loading-dots loading-lg text-[var(--color-crt)]"
-						></div>
-						<p class="mt-4">Searching for candidates...</p>
-						<p class="text-sm opacity-75">This will take 5-10 seconds</p>
-					</div>
-				{:else if $candidates.length === 0}
-					<div class="text-center py-8">
-						<p>No candidates available.</p>
-						<p class="text-sm opacity-75 mt-2">
-							Click "Find More Candidates" to search
-						</p>
-					</div>
-				{:else}
-					{#each $candidates as worker (worker.id)}
-						<div class="candidate-card border-2 border-[var(--color-crt)] p-3">
-							<div class="grid grid-cols-2 gap-2 mb-3">
-								<div class="col-span-2 title text-lg">{worker.name}</div>
-								<div>
-									Role: <span class="text-[var(--color-crt)]">{worker.job}</span
-									>
-								</div>
-								<div>
-									XP: <span class="text-[var(--color-crt)]"
-										>{worker.xp} / 10000</span
-									>
-								</div>
-								<div>
-									Weekly Salary: <span class="text-[var(--color-crt)]"
-										>${worker.salary}</span
-									>
-								</div>
-								<div>
-									Happiness: <span class="text-[var(--color-crt)]"
-										>{worker.happiness}%</span
-									>
-								</div>
-							</div>
-							<button
-								class="btn btn-sm w-full
-									{$g.website && $g.website.money >= worker.salary
-									? 'btn-primary'
-									: 'btn-disabled'}
-								"
-								on:click={() => handleHire(worker)}
-							>
-								Hire {worker.name}
-							</button>
+							class="flex flex-col items-center justify-center py-8 w-full col-span-2"
+						>
+							<div
+								class="loading loading-dots loading-lg text-[var(--color-crt)]"
+							></div>
+							<p class="mt-4">Searching for candidates...</p>
+							<p class="text-sm opacity-75">This will take 5-10 seconds</p>
 						</div>
-					{/each}
-				{/if}
+					{:else if $candidates.length === 0}
+						<div class="text-center py-8 w-full col-span-2">
+							<p>No candidates available.</p>
+							<p class="text-sm opacity-75 mt-2">
+								Click "Find More Candidates" to search
+							</p>
+						</div>
+					{:else}
+						{#each $candidates as worker (worker.id)}
+							<div
+								class="candidate-card border-2 border-[var(--color-crt)] p-3 flex flex-col justify-between"
+							>
+								<div class="grid grid-cols-2 gap-2 mb-3">
+									<div class="col-span-2 text-2xl">{worker.name}</div>
+									<div>
+										Role: <span
+											class="text-white px-2
+											{getJobColor(worker.job)}
+										">{worker.job}</span
+										>
+									</div>
+									<div>
+										XP: <span class="text-[var(--color-crt)]"
+											>{numberWithCommas(worker.xp)} / 10,000</span
+										>
+									</div>
+									<div>
+										Weekly Salary: <span class="text-[var(--color-crt)]"
+											>{numberToMoney(worker.salary)}</span
+										>
+									</div>
+									<div>
+										Happiness: <span class="text-[var(--color-crt)]"
+											>{worker.happiness}%</span
+										>
+									</div>
+								</div>
+								<button
+									class="btn btn-sm w-full
+										{$g.website && $g.website.money >= worker.salary
+										? 'btn-primary'
+										: 'btn-disabled'}
+									"
+									on:click={() => handleHire(worker)}
+								>
+									Hire {worker.name}
+								</button>
+							</div>
+						{/each}
+					{/if}
+				</div>
 			</div>
 			<div class="modal-action">
 				<button
@@ -188,30 +202,37 @@
 				<button class="btn" on:click={handleCancel}>Close</button>
 			</div>
 		</div>
+		<form method="dialog" class="modal-backdrop">
+			<button on:click={handleCancel}>close</button>
+		</form>
 	</div>
 {/if}
 
 <style>
-	.candidates-list {
+	.candidates-container {
+		max-height: 24rem;
 		scrollbar-width: thin;
 		scrollbar-color: var(--color-crt) var(--color-terminal);
 	}
 
-	.candidates-list::-webkit-scrollbar {
+	.candidates-container::-webkit-scrollbar {
+		height: 8px;
 		width: 8px;
 	}
 
-	.candidates-list::-webkit-scrollbar-track {
+	.candidates-container::-webkit-scrollbar-track {
 		background: var(--color-terminal);
 	}
 
-	.candidates-list::-webkit-scrollbar-thumb {
+	.candidates-container::-webkit-scrollbar-thumb {
 		background-color: var(--color-crt);
 		border: 2px solid var(--color-terminal);
+		border-radius: 4px;
 	}
 
 	.candidate-card {
 		background: rgba(0, 0, 0, 0.3);
+		flex-shrink: 0;
 	}
 
 	:global(.loading-dots) {

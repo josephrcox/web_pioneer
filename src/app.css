@@ -22,6 +22,92 @@
 	--font-arcade: 'Press Start 2P', cursive;
 	--color-crt: #a8ff00;
 	--color-terminal: #1a1a1a;
+
+	/* DaisyUI custom colors */
+	--p: #a8ff00; /* Primary color - our CRT green */
+	--pf: #86cc00; /* Primary focus */
+	--pc: #1a1a1a; /* Primary content (text on primary background) */
+	--ph: transparent; /* Primary hover - transparent for our retro effect */
+
+	--s: #4a9eff; /* Secondary color - blue */
+	--sf: #3d84d4; /* Secondary focus */
+	--sc: #1a1a1a; /* Secondary content */
+	--sh: transparent; /* Secondary hover */
+
+	--e: #ff4444; /* Error/Danger color - red */
+	--ef: #cc3636; /* Error focus */
+	--ec: #1a1a1a; /* Error content */
+	--eh: transparent; /* Error hover */
+
+	--w: #ff9900; /* Warning color - orange */
+	--wf: #cc7a00; /* Warning focus */
+	--wc: #1a1a1a; /* Warning content */
+	--wh: transparent; /* Warning hover */
+}
+
+/* Base button styles */
+.btn {
+	font-family: var(--font-retro);
+	text-transform: uppercase;
+	border: 2px solid;
+	transition: all 0.2s;
+}
+
+/* Primary button */
+.btn-primary {
+	background-color: var(--p);
+	color: var(--pc);
+	border-color: var(--p);
+}
+
+.btn-primary:hover {
+	background-color: transparent !important;
+	color: var(--p) !important;
+	border-color: var(--p) !important;
+}
+
+/* Secondary button */
+.btn-secondary {
+	background-color: var(--s);
+	color: var(--sc);
+	border-color: var(--s);
+}
+
+.btn-secondary:hover {
+	background-color: transparent !important;
+	color: var(--s) !important;
+	border-color: var(--s) !important;
+}
+
+/* Error button */
+.btn-error {
+	background-color: var(--e);
+	color: var(--ec);
+	border-color: var(--e);
+}
+
+.btn-error:hover {
+	background-color: transparent !important;
+	color: var(--e) !important;
+	border-color: var(--e) !important;
+}
+
+/* Warning button */
+.btn-warning {
+	background-color: var(--w);
+	color: var(--wc);
+	border-color: var(--w);
+}
+
+.btn-warning:hover {
+	background-color: transparent !important;
+	color: var(--w) !important;
+	border-color: var(--w) !important;
+}
+
+.modal-backdrop {
+	background-color: rgba(0, 0, 0, 0);
+	opacity: 0;
 }
 
 body {
@@ -50,54 +136,10 @@ h1 {
 	padding: 2rem;
 }
 
-button {
-	border-radius: 8px;
-	border: 1px solid transparent;
-	padding: 0.6em 1.2em;
-	font-size: 1em;
-	font-weight: 500;
-	font-family: inherit;
-	background-color: #1a1a1a;
-	cursor: pointer;
-	transition: border-color 0.25s;
-}
-button:hover {
-	border-color: #646cff;
-}
-button:focus,
-button:focus-visible {
-	outline: 4px auto -webkit-focus-ring-color;
-}
-
 .title {
 	font-family: var(--font-arcade);
 	text-transform: uppercase;
 	letter-spacing: 2px;
-}
-
-.btn {
-	font-family: var(--font-retro);
-	text-transform: uppercase;
-	border: 2px solid var(--color-crt);
-	background: transparent;
-	color: var(--color-crt);
-	transition: all 0.2s;
-}
-
-.btn:hover {
-	background: var(--color-crt);
-	color: var(--color-terminal);
-	border-color: var(--color-crt);
-}
-
-.btn-primary {
-	background: var(--color-crt);
-	color: var(--color-terminal);
-}
-
-.btn-primary:hover {
-	background: transparent;
-	color: var(--color-crt);
 }
 
 .modal {

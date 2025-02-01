@@ -45,5 +45,8 @@
 				<button class="btn" on:click={handleCancel}>Cancel</button>
 			</div>
 		</div>
+		<form method="dialog" class="modal-backdrop">
+			<button on:click={handleCancel}>close</button>
+		</form>
 	</div>
 {/if}
