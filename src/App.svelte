@@ -131,7 +131,7 @@
 				<div class="flex flex-col mb-4">
 					<h2 class="text-2xl flex flex-row justify-between">
 						<span>Users right now</span>
-						<span> {activeWebsite.users}</span>
+						<span> {numberWithCommas(activeWebsite.users)}</span>
 					</h2>
 					<h2 class="text-2xl flex flex-row justify-between">
 						<span>Retention</span>
