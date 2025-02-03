@@ -1,13 +1,14 @@
 <!-- Svelte component that uses DaisyUI components to get input from the user -->
 
 <script lang="ts">
-	import { createEventDispatcher, onDestroy } from 'svelte';
+	import { createEventDispatcher, onDestroy, onMount } from 'svelte';
 	import { JOB_TYPE, type employee } from './objects/types';
 	// @ts-ignore
-	import { candidates, g } from './store';
+	import { candidates, g, paused } from './store';
 	import {
 		generateEmployeeName,
 		getJobColor,
+		getMaxXPForHiring,
 		numberToMoney,
 		numberWithCommas,
 	} from './utils';
@@ -24,6 +25,7 @@
 			isLoading = false;
 		}
 		dispatch('cancel');
+		$paused = false;
 		isOpen = false;
 	}
 
@@ -57,7 +59,10 @@
 	}
 
 	function generateWorker(id: number): employee {
-		let randomXp = Math.floor(Math.random() * 9000) + 1000;
+		const maxXP = getMaxXPForHiring($g.website);
+		const minXP = 1000;
+
+		let randomXp = Math.floor(Math.random() * (maxXP - minXP)) + minXP;
 
 		// Base salary calculation using linear interpolation with some curve
 		let baseSalary = 350 + ((randomXp - 1000) * (2000 - 350)) / (10000 - 1000);
@@ -84,6 +89,7 @@
 			job: randomJob,
 			date_hired: 0,
 			happiness: Math.floor(Math.random() * 100),
+			contributions: 0,
 		};
 	}
 
@@ -112,7 +118,14 @@
 		}
 	}
 
+	onMount(() => {
+		if (isOpen) {
+			$paused = true;
+		}
+	});
+
 	onDestroy(() => {
+		$paused = false;
 		if (searchTimeout) {
 			clearTimeout(searchTimeout);
 		}
@@ -127,6 +140,11 @@
 	<div class="modal modal-open">
 		<div class="modal-box min-w-[70%]">
 			<h3 class="title text-xl mb-8">Available Candidates</h3>
+			<p class="text-md opacity-75 mb-4">
+				With your current users, you can hire employees up to {numberWithCommas(
+					getMaxXPForHiring($g.website),
+				)} XP.
+			</p>
 			<div class="candidates-container w-full overflow-x-auto">
 				<div class="candidates-list grid grid-cols-2 gap-4 pb-4">
 					{#if isLoading}

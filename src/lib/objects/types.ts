@@ -11,6 +11,20 @@ export type website = {
 	money: number;
 	users: number;
 	retention: number;
+	server_costs: {
+		weekly_spend: number; // minimum 50
+		user_capacity: number; // calculated as weekly_spend * 40
+	};
+	user_changes: {
+		net_change_today: number;
+		rolling_average: number;
+		daily_history: number[]; // Store last 7 days of changes
+	};
+	profit_changes: {
+		net_change_today: number;
+		rolling_average: number;
+		daily_history: number[]; // Store last 7 days of changes
+	};
 	// Scores start at 0 but work their way up. No maximum. They are compared based on ratios.
 	// For example, if a site has a functionality of 1000 but a reliability of 10,
 	// ... then they are going to have stability issues.
@@ -37,6 +51,10 @@ export type projectRecord = {
 	};
 	assignees: number[];
 	completed: boolean;
+	rules: {
+		paid_only: boolean;
+		weekly_ad_spend?: number; // Amount to spend on ads per week
+	};
 };
 
 // job type enum
@@ -55,6 +73,7 @@ export type employee = {
 	date_hired: number;
 	happiness: number; // 0 - 100
 	salary: number;
+	contributions: number;
 };
 
 export enum FEATURE {
@@ -62,69 +81,40 @@ export enum FEATURE {
 	MONETIZATION = 'monetization',
 	SECURITY = 'security',
 	MEDIA = 'media',
-	SOCIAL = 'social',
 	ENGAGEMENT = 'engagement',
 	USER_EXPERIENCE = 'user experience',
 }
 
 export enum PROJECT_NAME {
 	HELLO_WORLD = 'Hello World',
-	ACCOUNT_CREATION = 'Account Creation',
-	ACCOUNT_DELETION = 'Account Deletion',
-	PHOTO_UPLOAD = 'Photo Upload',
-	// Core Blog Features
-	BASIC_BLOG_POST = 'Basic Blog Post',
-	RICH_TEXT_EDITOR = 'Rich Text Editor',
-	BLOG_CATEGORIES = 'Blog Categories',
-	BLOG_SEARCH = 'Blog Search',
-	// Engagement Features
-	COMMENT_SYSTEM = 'Comment System',
-	USER_PROFILES = 'User Profiles',
-	FOLLOW_SYSTEM = 'Follow System',
-	LIKE_SYSTEM = 'Like System',
-	NEWSLETTER = 'Newsletter Integration',
-	// Media Features
-	IMAGE_GALLERY = 'Image Gallery',
-	VIDEO_EMBEDDING = 'Video Embedding',
-	// Monetization
-	PREMIUM_CONTENT = 'Premium Content',
-	SUBSCRIPTION_SYSTEM = 'Subscription System',
-	AD_INTEGRATION = 'Ad Integration',
-	// Analytics & Growth
-	SEO_OPTIMIZATION = 'SEO Optimization',
-	ANALYTICS_DASHBOARD = 'Analytics Dashboard',
-	// Security & Performance
-	CACHING_SYSTEM = 'Caching System',
-	SPAM_PROTECTION = 'Spam Protection',
-	BACKUP_SYSTEM = 'Backup System',
-	ANTI_BOT_SYSTEM = 'Anti-Bot Protection',
-	MEDIA_SCANNING = 'Media Security Scanning',
-	DDOS_PROTECTION = 'DDoS Protection',
-	BRUTE_FORCE_PROTECTION = 'Brute Force Protection',
-	// Growth & Distribution
-	SOCIAL_SHARING = 'Social Sharing',
-	RSS_FEED = 'RSS Feed',
-	CROSS_POSTING = 'Cross Posting',
-	CONTENT_SCHEDULING = 'Content Scheduling',
-	AUTHOR_COLLABORATION = 'Author Collaboration',
-	READING_TIME = 'Reading Time Estimates',
-	RELATED_POSTS = 'Related Posts',
-	TAG_SYSTEM = 'Tag System',
-	SERIES_POSTS = 'Series Posts',
-	EMAIL_DIGESTS = 'Email Digests',
-	// Continuous Projects
+	PROFILE_CREATION = 'Profile Creation',
+	INTERESTS = 'Interests',
+	LOVE_FINDER_V1 = 'Love Finder v1',
+	ANONYMOUS_SHARING = 'Anonymous Sharing',
 	NEWSPAPER_ADS = 'Newspaper Ads',
-	SOCIAL_MEDIA_MANAGEMENT = 'Social Media Management',
-	CONTENT_MARKETING = 'Content Marketing',
-	COMMUNITY_MANAGEMENT = 'Community Management',
-	SEO_MAINTENANCE = 'SEO Maintenance',
-	// Performance & Reliability
-	BASIC_BUG_FIXES = 'Basic Bug Fixes',
-	ADVANCED_BUG_FIXES = 'Advanced Bug Fixes',
-	CRITICAL_BUG_FIXES = 'Critical Bug Fixes',
-	SERVER_UPGRADE_T1 = 'Server Upgrade Tier 1',
-	SERVER_UPGRADE_T2 = 'Server Upgrade Tier 2',
-	SERVER_UPGRADE_T3 = 'Server Upgrade Tier 3',
+	PROFILE_PICTURES = 'Profile Pictures',
+	BASIC_BUG_FIXES_1 = 'Basic Bug Fixes #1',
+	ADVANCED_BUG_FIXES_1 = 'Advanced Bug Fixes #1',
+	IMPROVED_SERVERS_1 = 'Improved Servers #1',
+	GEO_LOCATION = 'Geo-location',
+	BROWSE = 'Browse',
+	HEARTING = 'Hearting',
+	PRIVATE_MESSAGING = 'Private Messaging',
+	BANNER_ADS = 'Banner Ads',
+	LOVE_FINDER_V2 = 'Love Finder v2',
+	SUPER_HEART = 'SuperHeart',
+	BASIC_BUG_FIXES_2 = 'Basic Bug Fixes #2',
+	ADVANCED_BUG_FIXES_2 = 'Advanced Bug Fixes #2',
+	IMPROVED_SERVERS_2 = 'Improved Servers #2',
+	PROFILE_POSTS = 'Profile Posts',
+	COMMENTING = 'Commenting',
+	BLOCKING = 'Blocking',
+	LOOKING_FOR = 'Looking For',
+	LOVE_FINDER_V3 = 'Love Finder v3',
+	BASIC_BUG_FIXES_3 = 'Basic Bug Fixes #3',
+	ADVANCED_BUG_FIXES_3 = 'Advanced Bug Fixes #3',
+	IMPROVED_SERVERS_3 = 'Improved Servers #3',
+	AD_FREE = 'Ad-free',
 }
 
 // Teams can have different projects to work on.
@@ -157,4 +147,10 @@ export type project = {
 		security: number;
 		virality: number;
 	};
+};
+
+export type MonetizationConfig = {
+	banner_ad_revenue_per_user_per_week: number;
+	super_heart_revenue_per_user_per_week: number;
+	ad_free_revenue_per_user_per_week: number;
 };
