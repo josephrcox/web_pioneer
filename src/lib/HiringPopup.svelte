@@ -88,7 +88,7 @@
 			xp: randomXp,
 			job: randomJob,
 			date_hired: 0,
-			happiness: Math.floor(Math.random() * 100),
+			happiness: Math.floor(Math.random() * 75) + 25,
 			contributions: 0,
 		};
 	}

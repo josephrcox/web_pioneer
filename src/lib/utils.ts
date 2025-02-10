@@ -2,12 +2,18 @@ import {
 	JOB_TYPE,
 	PROJECT_NAME,
 	type employee,
+	type investmentOpportunity,
 	type project,
 	type projectRecord,
 	type website,
+	type MarketingConfig,
 } from './objects/types';
 import { projects } from './objects/projects';
-import { monetizationConfig } from './objects/monetization';
+import {
+	MONETIZATION_LIMITS,
+	monetizationConfig,
+} from './objects/monetization';
+import { MARKETING_LIMITS } from './objects/marketing';
 import { g } from './store';
 
 export function numberToMoney(number: number) {
@@ -23,8 +29,8 @@ export function numberWithCommas(number: number) {
 	return number.toLocaleString('en-US');
 }
 
-export function getJobColor(job: JOB_TYPE) {
-	let color = 'cursor-pointer text-white px-2 py-1 ';
+export function getJobColor(job: JOB_TYPE, withPadding = false) {
+	let color = 'text-white cursor-pointer px-1 ';
 	switch (job) {
 		case JOB_TYPE.GROWTH:
 			color += 'bg-green-700';
@@ -41,6 +47,9 @@ export function getJobColor(job: JOB_TYPE) {
 		default:
 			color += 'bg-white';
 			break;
+	}
+	if (withPadding) {
+		return color + ' px-2 py-1';
 	}
 	return color;
 }
@@ -102,14 +111,21 @@ export function generateEmployeeName() {
 }
 
 export function getAvailableProjects(website: website): project[] {
+	if (!website) return [];
 	// Get list of completed project names from the website's projects
 	const completedProjectNames = new Set(
-		website.projects.filter((pr) => pr.completed).map((pr) => pr.project.name),
+		website.projects
+			.map(migrateProjectRecord)
+			.filter((pr) => pr.completed)
+			.map((pr) => pr.project.name),
 	);
 
 	// Get list of in-progress project names
 	const inProgressProjectNames = new Set(
-		website.projects.filter((pr) => !pr.completed).map((pr) => pr.project.name),
+		website.projects
+			.map(migrateProjectRecord)
+			.filter((pr) => !pr.completed)
+			.map((pr) => pr.project.name),
 	);
 
 	// Filter available projects based on dependencies and exclude in-progress projects
@@ -136,6 +152,26 @@ export function getPayingUserPercentage(website: website) {
 	return website.retention;
 }
 
+export function migrateProjectRecord(project: projectRecord): projectRecord {
+	const baseProject = project as Omit<projectRecord, 'enabled'>;
+	if (!('enabled' in project)) {
+		return {
+			project: baseProject.project,
+			costs_remaining: baseProject.costs_remaining,
+			assignees: baseProject.assignees,
+			completed: baseProject.completed,
+			rules: baseProject.rules,
+			enabled: true,
+		};
+	}
+	return project;
+}
+
+// Helper function to check if a project is enabled (handles old game files)
+export function isProjectEnabled(project: projectRecord): boolean {
+	return 'enabled' in project ? project.enabled : true;
+}
+
 export function startProject(project: project, website: website) {
 	// Update the game state through the store
 	g.update((g) => {
@@ -144,13 +180,15 @@ export function startProject(project: project, website: website) {
 			...g,
 			website: {
 				...g.website,
+				// Migrate any existing projects and add the new one
 				projects: [
-					...g.website.projects,
+					...g.website.projects.map(migrateProjectRecord),
 					{
 						project,
 						costs_remaining: { ...project.costs },
 						assignees: [] as number[],
 						completed: false,
+						enabled: true,
 						rules: {
 							paid_only: false,
 						},
@@ -176,13 +214,21 @@ export function assignEmployee(
 
 export function adjustEmployeeHappiness(website: website): website {
 	for (let employee of website.employees) {
-		// This function is called weekly and adjusts the employees happiness. Every employee slowly loses happiness,
-		// but if the employee is assigned to a project, they gain happiness slowly too.
-		if (!getAvailableEmployees(website).includes(employee)) {
-			employee.happiness -= Math.round(Math.random() * 2);
+		// This function is called daily and adjusts the employees happiness
+		if (getAvailableEmployees(website).includes(employee)) {
+			// Employee is idle - should take ~2 weeks to reach 0
+			// 14 days * 8 ticks per day = 112 ticks
+			// To go from 100 to 0 in 112 ticks = ~0.89 per tick
+			employee.happiness -= 0.89;
+		} else if (employee.contributions > 0) {
+			// Working employees gain happiness based on their contributions
+			// Scale happiness gain based on XP - less experienced employees gain more happiness
+			const xpScalingFactor = Math.max(0.1, 1 - employee.xp / 5000);
+			employee.happiness += (employee.contributions / 10) * xpScalingFactor;
 		}
 
-		employee.happiness = Math.floor(
+		// clamp between 1 and 100
+		employee.happiness = Math.round(
 			Math.max(1, Math.min(100, employee.happiness)),
 		);
 
@@ -254,8 +300,78 @@ export function getAvailableEmployees(
 	return availableEmployees;
 }
 
+export function getInvestmentOpportunities(
+	website: website,
+): investmentOpportunity[] {
+	let opportunities: investmentOpportunity[] = [];
+
+	// Base valuation on users and revenue, with a 1995-appropriate multiplier
+	// In 1995, tech companies were often valued at 2-4x revenue
+	const annualRevenue = website.profit_changes.net_change_today * 365;
+	const revenueMultiple = 3 + website.retention * 2; // 3-5x multiple based on retention
+
+	// User-based valuation component (users were valuable but not as much as today)
+	// In 1995, each user might be worth $2-5
+	const userValue = website.users * 3;
+
+	// Basic valuation based on revenue and users
+	let valuation = Math.max(50000, annualRevenue * revenueMultiple + userValue);
+
+	// Cap the valuation at a reasonable 1995 level
+	// Very few internet companies in 1995 were worth more than $50M
+	valuation = Math.min(valuation, 50000000);
+
+	// 30% chance to get an opportunity
+	if (Math.random() < 0.3) {
+		const randomPercentage = Math.floor(Math.random() * 30) + 2;
+		opportunities.push({
+			firm: generateInvestmentFirmName(),
+			valuation: Math.round(valuation),
+			percent: randomPercentage,
+			day: website.day,
+			expires: website.day + 7,
+		});
+	}
+
+	return opportunities;
+}
+
+export function acceptInvestment(
+	website: website,
+	opportunity: investmentOpportunity,
+): website {
+	if (website.investors == undefined) {
+		website.investors = [];
+	}
+	const totalAllowedToSell =
+		100 - website.investors.reduce((a, b) => a + b.percent_owned, 0);
+
+	if (totalAllowedToSell < opportunity.percent) {
+		return website;
+	}
+
+	website.investment_opportunities = website.investment_opportunities.filter(
+		(o) => o.firm !== opportunity.firm,
+	);
+	// Delete all investment opportunities that are null
+	website.investment_opportunities = website.investment_opportunities.filter(
+		(o) => o !== null,
+	);
+
+	website.investors.push({
+		firm: opportunity.firm,
+		percent_owned: opportunity.percent,
+		valuation: opportunity.valuation,
+		day_invested: website.day,
+	});
+
+	website.money += opportunity.valuation * (opportunity.percent / 100);
+
+	return website;
+}
+
 export function getEmployeeContributionScore(employee: employee): number {
-	return (employee.xp * (employee.happiness / 150)) / 40 / 40;
+	return (employee.xp * (employee.happiness / 100)) / 56 / 40;
 }
 
 export function workOnProject(
@@ -279,6 +395,11 @@ export function workOnProject(
 		// Iterate over project costs
 		for (const costType in project.costs_remaining) {
 			if (costType === employee.job) {
+				// Skip if this resource type is already complete
+				if (project.costs_remaining[costType] <= 0) {
+					continue;
+				}
+
 				const contribution = getEmployeeContributionScore(employee);
 				employee.contributions += contribution;
 				project.costs_remaining[costType] -= contribution;
@@ -291,15 +412,22 @@ export function workOnProject(
 					// Calculate XP gain with diminishing returns
 					// Base XP gain is contribution * 20 (instead of 400)
 					// This means 5 contribution points = 100 base XP
-					const baseXpGain = contribution * 20;
+					const baseXpGain = contribution * 10;
+					employee.happiness += contribution / 10;
+					employee.happiness = Math.round(
+						Math.max(1, Math.min(100, employee.happiness)),
+					);
 
 					// Apply diminishing returns based on current XP
 					// As XP approaches 10000, gains become smaller
 					const currentXp = website.employees[employeeIndex].xp;
-					const xpMultiplier = Math.max(0.05, 1 - currentXp / 8000);
+					const xpMultiplier = Math.max(0.05, 1 - currentXp / 5000);
 
 					// Add the scaled XP gain
-					const actualXpGain = Math.floor(baseXpGain * xpMultiplier);
+					const actualXpGain =
+						project.costs_remaining[employee.job] <= 0
+							? 0
+							: Math.floor(baseXpGain * xpMultiplier);
 					website.employees[employeeIndex].xp = Math.min(
 						10000,
 						website.employees[employeeIndex].xp + actualXpGain,
@@ -320,8 +448,31 @@ export function isProjectComplete(project: projectRecord) {
 }
 
 export function shipProject(project: projectRecord): projectRecord {
+	// Give happiness boost to all employees who contributed
+	if (project.assignees.length > 0) {
+		g.update((g) => {
+			if (!g.website) return g;
+			const updatedEmployees = g.website.employees.map((employee) => {
+				if (project.assignees.includes(employee.id)) {
+					// Random boost between 1-5%
+					const happinessBoost = Math.floor(Math.random() * 5) + 1;
+					employee.happiness = Math.min(
+						100,
+						employee.happiness + happinessBoost,
+					);
+				}
+				return employee;
+			});
+			return {
+				...g,
+				website: {
+					...g.website,
+					employees: updatedEmployees,
+				},
+			};
+		});
+	}
 	project.completed = true;
-
 	return project;
 }
 
@@ -337,47 +488,184 @@ export function fireEmployee(employee: employee, website: website): website {
 	return website;
 }
 
-export function removeUsers(website: website): website {
-	const users = website.users;
-
-	// Calculate total website value
-	const totalWebsiteValue = Object.values(website.scores).reduce(
+export function addUsers(website: website): website {
+	// Calculate total scores
+	const totalScores = Object.values(website.scores).reduce(
 		(sum, val) => sum + val,
 		0,
 	);
 
-	// Calculate retention penalty based on total website value
-	let retentionPenalty = 1.0;
-	if (totalWebsiteValue < 100) {
-		retentionPenalty = 0.8; // 20% penalty for very basic sites
-	} else if (totalWebsiteValue < 500) {
-		retentionPenalty = 0.9; // 10% penalty for developing sites
+	// Base organic growth - more generous early scaling, gets harder later
+	const baseOrganicGrowth = Math.max(
+		website.users < 10 ? 2 : 1, // Guarantee at least 2 new users when very small
+		Math.round(
+			(Math.random() * Math.sqrt(totalScores)) /
+				(website.users < 10
+					? 4
+					: website.users < 100
+					? 6
+					: website.users < 1000
+					? 8
+					: 2),
+		),
+	);
+
+	// Calculate marketing boost from all active marketing campaigns
+	let marketingBoost = 1;
+	const marketingContributions: { [key: string]: number } = {};
+
+	const marketingProjects = [
+		{
+			name: PROJECT_NAME.NEWSPAPER_ADS,
+			configKey: 'newspaper_ads_weekly_spend',
+			multiplier: MARKETING_LIMITS.NEWSPAPER_ADS.VIRALITY_MULTIPLIER * 0.4,
+			baseUsers: 1, // ~24 users per day base
+		},
+		{
+			name: PROJECT_NAME.TV_INFOMERCIAL,
+			configKey: 'tv_infomercial_weekly_spend',
+			multiplier: MARKETING_LIMITS.TV_INFOMERCIAL.VIRALITY_MULTIPLIER * 0.9,
+			baseUsers: 3, // ~72 users per day base
+		},
+		{
+			name: PROJECT_NAME.RADIO_ADS,
+			configKey: 'radio_ads_weekly_spend',
+			multiplier: MARKETING_LIMITS.RADIO_ADS.VIRALITY_MULTIPLIER * 0.6,
+			baseUsers: 2, // ~48 users per day base
+		},
+		{
+			name: PROJECT_NAME.COLLEGE_CAMPUS_CAMPAIGN,
+			configKey: 'college_campus_weekly_spend',
+			multiplier: MARKETING_LIMITS.COLLEGE_CAMPUS.VIRALITY_MULTIPLIER * 0.7,
+			baseUsers: 1.5, // ~36 users per day base
+		},
+	];
+
+	marketingProjects.forEach(({ name, configKey, multiplier, baseUsers }) => {
+		const project = website.projects.find(
+			(p) => p.project.name === name && p.completed && p.enabled,
+		);
+		if (project) {
+			const weeklySpend =
+				website.marketing_config?.[configKey as keyof MarketingConfig] ??
+				project.rules?.weekly_ad_spend ??
+				0;
+			if (weeklySpend > 0) {
+				// New formula: base users + spend-based boost with better scaling
+				const spendBoost =
+					(Math.sqrt(weeklySpend) / 30 + baseUsers) * // Reduced scaling
+					multiplier *
+					(Math.random() * 0.2 + 0.9);
+				marketingBoost *= 1 + spendBoost;
+				marketingContributions[name] = spendBoost * baseOrganicGrowth * 1.5;
+			}
+		}
+	});
+
+	// Calculate viral coefficient based on virality score and total scores
+	let maxForViral = website.users < 1000 ? 1000 : website.users / 10;
+	if (maxForViral < 1000) {
+		maxForViral = 1000;
+	}
+	const viralityMultiplier = Math.min(0.4, totalScores / maxForViral); // Less aggressive scaling
+	const viralCoefficient =
+		1 +
+		(website.scores.virality /
+			(website.users < 10
+				? 10
+				: website.users < 20000
+				? 20
+				: website.users / 2000)) *
+			viralityMultiplier;
+
+	// Calculate viral growth with better early game scaling
+	const baseViralGrowth =
+		website.users === 0 && website.scores.virality > 0 ? 2 : 0; // Increased from 1 to 2
+	const viralGrowth = Math.max(
+		baseViralGrowth,
+		(Math.max(1, website.users) / (website.users < 100 ? 25 : 50)) * // Made viral spread faster
+			(viralCoefficient - 1) *
+			(0.95 + Math.random() * 0.2),
+	);
+
+	// Random fluctuation between -5% and +5% of current growth
+	const currentGrowth = baseOrganicGrowth + viralGrowth;
+	const randomFluctuation = currentGrowth * (Math.random() * 0.1 - 0.05);
+
+	// Calculate total new users with marketing boost
+	let newUsers = Math.floor(
+		(baseOrganicGrowth + viralGrowth + randomFluctuation) * marketingBoost,
+	);
+
+	// Add "internet adoption" limiting factor
+	const maxPotentialUsers = 16000000;
+	// More forgiving early game slowdown
+	const adoptionFactor = Math.max(
+		0.1,
+		Math.pow(
+			1 - website.users / maxPotentialUsers,
+			website.users < 100 ? 0.5 : website.users < 1000 ? 0.8 : 1.2, // Made early scaling much more forgiving
+		),
+	);
+	newUsers = Math.floor(newUsers * adoptionFactor);
+
+	// Growth caps based on user count - more forgiving early, still prevents unrealistic growth
+	const maxDailyGrowth = Math.min(
+		website.users < 10 ? 1.0 : website.users < 100 ? 0.5 : 0.25, // Much higher early game caps
+		Math.max(
+			0.05, // Increased minimum growth rate
+			(website.users < 100 ? 0.5 : 0.25) -
+				(website.users / maxPotentialUsers) * 0.13,
+		),
+	);
+	const maxHourlyGrowth = maxDailyGrowth / 8; // Changed from /24 to /8 for faster early growth
+	const maxHourlyUsers = Math.max(
+		website.users < 10 ? 3 : website.users < 100 ? 2 : 1, // Increased minimum hourly users
+		Math.floor(website.users * maxHourlyGrowth),
+	);
+	newUsers = Math.min(newUsers, maxHourlyUsers);
+
+	// Cap user growth based on server capacity
+	const potentialNewTotal = website.users + newUsers;
+	if (potentialNewTotal > website.server_costs.user_capacity) {
+		newUsers = Math.max(0, website.server_costs.user_capacity - website.users);
 	}
 
-	// Get effective retention (base retention * penalty)
-	const effectiveRetention = website.retention * retentionPenalty;
+	website.users += newUsers;
+	website.user_changes.net_change_today += newUsers;
+	if (website.users > website.server_costs.user_capacity) {
+		website.users = website.server_costs.user_capacity;
+	}
 
-	// We want to lose (1 - retention) of our users over a week
-	// So each hour (tick) we should lose:
-	// (1 - retention) / (24 * 7) of our current users
-	const hourlyLossRate = (1 - effectiveRetention) / 56;
+	return website;
+}
 
-	// Calculate users lost this tick
-	const lostUsers = Math.floor(users * hourlyLossRate);
+export function removeUsers(website: website): website {
+	// Calculate users to remove based on retention
+	// We want to lose (1 - retention) users over 45 days instead of 30
+	const hourlyLossRate = (1 - website.retention) / (15 * 8);
 
-	website.users = Math.max(0, users - lostUsers);
-	website.user_changes.net_change_today -= lostUsers;
+	// Add some randomness to the loss rate (±10%)
+	const randomizedLossRate = hourlyLossRate * (0.9 + Math.random() * 0.2);
 
-	// Log retention info for debugging
-	console.log('Retention info:', {
-		totalWebsiteValue: totalWebsiteValue.toFixed(1),
-		retentionPenalty: retentionPenalty.toFixed(2),
-		baseRetention: website.retention.toFixed(2),
-		effectiveRetention: effectiveRetention.toFixed(2),
-		hourlyLossRate: hourlyLossRate.toFixed(3),
-		lostUsers,
-		remainingUsers: website.users,
-	});
+	// Calculate base users to remove
+	let usersToRemove = Math.floor(website.users * randomizedLossRate);
+
+	// Add protection against massive losses
+	// No more than 1.5% of userbase can be lost per day (changed from 2%)
+	const maxDailyLoss = Math.floor(website.users * 0.015);
+	const maxHourlyLoss = Math.floor(maxDailyLoss / 8);
+	usersToRemove = Math.min(usersToRemove, maxHourlyLoss);
+
+	// Additional protection: retention score reduces losses
+	const retentionProtection = Math.max(0.5, 1 - website.retention * 0.5);
+	usersToRemove = Math.floor(usersToRemove * retentionProtection);
+
+	// Ensure we don't remove more users than we have
+	usersToRemove = Math.min(usersToRemove, website.users);
+
+	website.users = Math.round(Math.max(0, website.users - usersToRemove));
+	website.user_changes.net_change_today -= usersToRemove;
 
 	return website;
 }
@@ -398,173 +686,26 @@ export function getHighestScore(website: website): number {
 	return Math.max(...Object.values(website.scores));
 }
 
-export function addUsers(website: website): website {
-	// Calculate total impact scores from completed projects
-	let impacts = {
-		reliability: 0,
-		performance: 0,
-		easeOfUse: 0,
-		functionality: 0,
-		attractiveness: 0,
-		security: 0,
-		virality: 0,
+// Helper function to ensure scores never go below 0
+export function normalizeWebsiteScores(
+	scores: website['scores'],
+): website['scores'] {
+	return {
+		reliability: Math.max(0, scores.reliability),
+		performance: Math.max(0, scores.performance),
+		easeOfUse: Math.max(0, scores.easeOfUse),
+		functionality: Math.max(0, scores.functionality),
+		attractiveness: Math.max(0, scores.attractiveness),
+		security: Math.max(0, scores.security),
+		virality: Math.max(0, scores.virality),
 	};
-
-	for (let project of website.projects) {
-		if (project.completed) {
-			impacts.reliability += project.project.scores.reliability;
-			impacts.performance += project.project.scores.performance;
-			impacts.easeOfUse += project.project.scores.easeOfUse;
-			impacts.functionality += project.project.scores.functionality;
-			impacts.attractiveness += project.project.scores.attractiveness;
-			impacts.security += project.project.scores.security;
-			impacts.virality += project.project.scores.virality;
-		}
-	}
-
-	// Calculate total impact for organic growth
-	const totalImpact = Object.values(impacts).reduce((sum, val) => sum + val, 0);
-	if (totalImpact == 0) {
-		return website;
-	}
-
-	// Calculate ratio for retention (excluding virality)
-	const retentionScores = {
-		reliability: impacts.reliability,
-		performance: impacts.performance,
-		easeOfUse: impacts.easeOfUse,
-		functionality: impacts.functionality,
-		attractiveness: impacts.attractiveness,
-		security: impacts.security,
-	};
-
-	// Get non-zero scores to avoid division by zero
-	const nonZeroScores = Object.values(retentionScores).filter((v) => v > 0);
-	if (nonZeroScores.length === 0) {
-		website.retention = 0;
-	} else {
-		const min = Math.min(...nonZeroScores);
-		const max = Math.max(...nonZeroScores);
-		website.retention = (min * 1.05) / max; // Store as decimal between 0 and 1
-		if (website.retention > 1) {
-			website.retention = 1;
-		} else if (website.retention < 0) {
-			website.retention = 0;
-		}
-	}
-
-	// Find newspaper ads project if it exists and is completed
-	const newspaperAds = website.projects.find(
-		(p) => p.project.name === PROJECT_NAME.NEWSPAPER_ADS && p.completed,
-	);
-
-	// Calculate ad boost based on weekly spend (scaled down for more frequent updates)
-	let adBoost = 1;
-	if (newspaperAds?.rules.weekly_ad_spend) {
-		// More modest scaling:
-		// $500 = 1.1x boost
-		// $2500 = 1.3x boost
-		// $5000 = 1.5x boost
-		// $7500 = 1.7x boost
-		// $10000 = 1.9x boost
-		const spendAmount = newspaperAds.rules.weekly_ad_spend;
-		adBoost = 1 + spendAmount / 12500; // Linear scaling but more modest
-
-		// Small base boost for having ads
-		adBoost += newspaperAds.rules.weekly_ad_spend > 0 ? 0.1 : 0;
-	}
-
-	// Base organic growth now heavily depends on total impact
-	// With 100 total impact: ~2-3 users per tick
-	// With 200 total impact: ~4-6 users per tick
-	// With 500 total impact: ~10-15 users per tick
-	const baseOrganicGrowth = (Math.random() * Math.sqrt(totalImpact)) / 4;
-
-	// Viral coefficient scales with virality but is more modest
-	// Each 20 points of virality adds 0.05 to coefficient (max 1.25 at 100 virality)
-	const viralCoefficient = 1 + Math.min(0.25, impacts.virality / 400);
-
-	// Impact multiplier now more heavily weights total impact vs virality
-	const impactMultiplier = 1 + Math.log10(Math.max(1, totalImpact)) / 10;
-
-	// Calculate growth from existing users (with more modest caps)
-	const maxViralGrowth = Math.min(
-		website.users * 0.02, // Cap viral growth at 2% of current users per tick
-		Math.max(
-			0,
-			website.users *
-				(viralCoefficient - 1) *
-				impactMultiplier *
-				(0.95 + Math.random() * 0.1),
-		),
-	);
-
-	// Random fluctuation is smaller and scales with total impact
-	const randomFluctuation =
-		totalImpact > 0
-			? ((Math.random() * 2 - 1) * Math.sqrt(totalImpact)) / 10
-			: 0;
-
-	// Add all growth sources
-	let newUsers = Math.floor(
-		baseOrganicGrowth + maxViralGrowth + randomFluctuation,
-	);
-
-	// Small chance of a traffic spike (3% chance, size based on total impact)
-	const hadSpike = Math.random() < 0.03;
-	let spikeSize = 0;
-	if (hadSpike) {
-		spikeSize = Math.floor(
-			Math.max(
-				2,
-				Math.sqrt(totalImpact) *
-					(0.5 + Math.random()) *
-					(1 + impacts.virality / 200),
-			),
-		);
-		newUsers += spikeSize;
-	}
-
-	// Apply ad boost to ALL sources of growth
-	newUsers = Math.floor(newUsers * adBoost);
-
-	// Ensure some minimal growth with good scores
-	if (totalImpact > 150 && newUsers === 0) {
-		newUsers = 1;
-	}
-
-	// Cap user growth based on server capacity
-	const potentialNewTotal = website.users + newUsers;
-	if (potentialNewTotal > website.server_costs.user_capacity) {
-		newUsers = Math.max(0, website.server_costs.user_capacity - website.users);
-	}
-
-	console.log('User changes:', {
-		organic: baseOrganicGrowth.toFixed(2),
-		adBoost: adBoost.toFixed(2),
-		viralGrowth: maxViralGrowth.toFixed(2),
-		randomFluctuation: randomFluctuation.toFixed(2),
-		spike: spikeSize,
-		total: newUsers,
-		adSpend: newspaperAds?.rules.weekly_ad_spend,
-		retention: website.retention.toFixed(2),
-		viralCoefficient: viralCoefficient.toFixed(3),
-		impactMultiplier: impactMultiplier.toFixed(2),
-		totalImpact,
-		viralityScore: impacts.virality,
-		serverCapacity: website.server_costs.user_capacity,
-	});
-
-	website.users = Math.max(0, website.users + newUsers);
-	website.user_changes.net_change_today += newUsers;
-
-	return website;
 }
 
-export function processContinuousProjects(website: website): website {
-	// First, reset all scores to account only for non-continuous projects
+export function recalculateWebsiteScores(website: website): website {
+	// First, reset all scores to account only for completed projects
 	website.scores = website.projects
-		.filter((pr) => !pr.project.is_continuous && pr.completed)
+		.map(migrateProjectRecord)
+		.filter((pr) => pr.completed && pr.enabled)
 		.reduce(
 			(scores, pr) => {
 				Object.entries(pr.project.scores).forEach(([key, value]) => {
@@ -583,209 +724,177 @@ export function processContinuousProjects(website: website): website {
 			},
 		);
 
-	// Then process each completed continuous project
-	website.projects
-		.filter((pr) => pr.project.is_continuous && pr.completed)
-		.forEach((pr) => {
-			// Check if project has required roles filled
-			const hasRequiredRoles = pr.project.required_roles
-				? Object.entries(pr.project.required_roles).every(([role, count]) => {
-						const assignedEmployeesOfRole = pr.assignees
-							.map((id) => website.employees.find((e) => e.id === id))
-							.filter((e) => e && e.job === role).length;
-						return assignedEmployeesOfRole >= count;
-				  })
-				: true;
-
-			if (hasRequiredRoles && pr.project.target_score) {
-				// Calculate total productivity of assigned employees
-				const totalProductivity = pr.assignees
-					.map((id) => website.employees.find((e) => e.id === id))
-					.filter((e) => e !== undefined)
-					.reduce((sum, employee) => {
-						if (!employee) return sum;
-						return sum + (employee.xp * (employee.happiness / 200)) / 40;
-					}, 0);
-
-				// Apply productivity boost to target score
-				// Base boost of 1 point per 10 productivity
-				let boost = totalProductivity / 1000;
-
-				// For newspaper ads, scale the boost based on weekly spend
-				if (pr.project.name === PROJECT_NAME.NEWSPAPER_ADS) {
-					// Add base virality score from the project
-					website.scores.virality += pr.project.scores.virality;
-
-					if (pr.rules.weekly_ad_spend) {
-						// Scale from 500 to 10000 maps to 1x to 5x multiplier
-						const spendMultiplier = 1 + (pr.rules.weekly_ad_spend - 500) / 2375;
-						boost *= spendMultiplier;
-					}
-				}
-
-				website.scores[pr.project.target_score] += boost;
-			}
-		});
-
 	return website;
 }
 
-export function recalculateWebsiteScores(website: website): website {
-	// First reset all scores to 0
-	website.scores = {
-		reliability: 0,
-		performance: 0,
-		easeOfUse: 0,
-		functionality: 0,
-		attractiveness: 0,
-		security: 0,
-		virality: 0,
-	};
-
-	// Add scores from all completed non-continuous projects
-	website.projects
-		.filter((pr) => !pr.project.is_continuous && pr.completed)
-		.forEach((pr) => {
-			Object.entries(pr.project.scores).forEach(([key, value]) => {
-				website.scores[key as keyof typeof website.scores] += value;
-			});
-		});
-
-	// Process continuous projects and their boosts
-	website.projects
-		.filter((pr) => pr.project.is_continuous && pr.completed)
-		.forEach((pr) => {
-			// First add base scores if any
-			Object.entries(pr.project.scores).forEach(([key, value]) => {
-				website.scores[key as keyof typeof website.scores] += value;
-			});
-
-			// Then check if project has required roles filled for continuous effects
-			const hasRequiredRoles = pr.project.required_roles
-				? Object.entries(pr.project.required_roles).every(([role, count]) => {
-						const assignedEmployeesOfRole = pr.assignees
-							.map((id) => website.employees.find((e) => e.id === id))
-							.filter((e) => e && e.job === role).length;
-						return assignedEmployeesOfRole >= count;
-				  })
-				: true;
-
-			if (hasRequiredRoles && pr.project.target_score) {
-				// Calculate total productivity of assigned employees
-				const totalProductivity = pr.assignees
-					.map((id) => website.employees.find((e) => e.id === id))
-					.filter((e) => e !== undefined)
-					.reduce((sum, employee) => {
-						if (!employee) return sum;
-						return sum + (employee.xp * (employee.happiness / 200)) / 40;
-					}, 0);
-
-				// Apply productivity boost to target score
-				let boost = totalProductivity / 1000;
-
-				// Special handling for newspaper ads
-				if (
-					pr.project.name === PROJECT_NAME.NEWSPAPER_ADS &&
-					pr.rules.weekly_ad_spend
-				) {
-					const spendMultiplier = 1 + (pr.rules.weekly_ad_spend - 500) / 2375;
-					boost *= spendMultiplier;
-				}
-
-				website.scores[pr.project.target_score] += boost;
-			}
-		});
-
-	// Ensure no score goes below 0
-	Object.keys(website.scores).forEach((key) => {
-		if (website.scores[key as keyof typeof website.scores] < 0) {
-			website.scores[key as keyof typeof website.scores] = 0;
-		}
-	});
-
-	return website;
+export function makeEmployeeHappy(
+	employee: employee,
+	website: website,
+	cost: number,
+): employee {
+	if (cost > website.money) {
+		alert('Not enough money to make employee happy');
+		return employee;
+	}
+	employee.happiness = 100;
+	website.money -= cost;
+	return employee;
 }
 
-function dailyChanges(site: website) {
-	site.day++;
+export function getUserCapacity(
+	website: website,
+	weekly_spend: number,
+): number {
+	const totalWebsiteScores: number = Object.values(website.scores).reduce(
+		(sum, val) => sum + val,
+		0,
+	);
 
-	const initialMoney = site.money;
-
-	// Apply retention loss daily
-	site = removeUsers(site);
-
-	// Initialize history arrays if they don't exist
-	if (!site.user_changes.daily_history) {
-		site.user_changes.daily_history = [];
-	}
-	if (!site.profit_changes.daily_history) {
-		site.profit_changes.daily_history = [];
+	if (totalWebsiteScores === 0) {
+		return 0;
 	}
 
-	// Add today's changes to history
-	site.user_changes.daily_history.push(site.user_changes.net_change_today);
-	site.profit_changes.daily_history.push(site.profit_changes.net_change_today);
+	// Calculate base capacity from weekly spend using a logarithmic scale
+	// This creates diminishing returns as spending increases
+	const baseCapacity = Math.log10(weekly_spend + 1) * 500;
 
-	// Keep only last 7 days
-	if (site.user_changes.daily_history.length > 7) {
-		site.user_changes.daily_history.shift();
-	}
-	if (site.profit_changes.daily_history.length > 7) {
-		site.profit_changes.daily_history.shift();
-	}
+	// Calculate performance ratio (between 0.1 and 2.0)
+	// High performance and reliability with reasonable functionality is ideal
+	const performanceRatio = Math.min(
+		2.0,
+		Math.max(
+			0.1,
+			((website.scores.reliability + website.scores.performance) /
+				Math.max(1, website.scores.functionality)) *
+				0.5,
+		),
+	);
 
-	// Calculate true rolling averages
-	site.user_changes.rolling_average =
-		site.user_changes.daily_history.reduce((sum, val) => sum + val, 0) /
-		site.user_changes.daily_history.length;
+	// Calculate final capacity with performance scaling
+	let capacity = Math.round(baseCapacity * performanceRatio);
 
-	site.profit_changes.rolling_average =
-		site.profit_changes.daily_history.reduce((sum, val) => sum + val, 0) /
-		site.profit_changes.daily_history.length;
+	// Apply minimum capacity based on weekly spend
+	const minimumCapacity = weekly_spend * 15;
+	capacity = Math.max(capacity, minimumCapacity);
 
-	console.log('Daily summary:', {
-		netChangeToday: site.user_changes.net_change_today,
-		rollingAverage: site.user_changes.rolling_average,
-		history: site.user_changes.daily_history,
-		totalUsers: site.users,
-		netProfitToday: site.profit_changes.net_change_today,
-		profitRollingAverage: site.profit_changes.rolling_average,
-		profitHistory: site.profit_changes.daily_history,
-		totalMoney: site.money,
-	});
+	// Cap maximum capacity at 50 million users
+	const maxCapacity = 50_000_000;
+	capacity = Math.min(capacity, maxCapacity);
 
-	// Reset daily counters but keep the rolling averages and history
-	site.user_changes.net_change_today = 0;
-	site.profit_changes.net_change_today = 0;
-
-	return site;
+	// Ensure capacity is never negative
+	return Math.max(0, capacity);
 }
 
-function calculateProjectRevenue(
+export function calculateProjectRevenue(
 	project: projectRecord,
 	website: website,
 ): number {
-	if (!project.completed) return 0;
+	const migratedProject = migrateProjectRecord(project);
+	if (!migratedProject.completed || !migratedProject.enabled) return 0;
 
-	const payingUserPercentage = getPayingUserPercentage(website);
-	const activeUsers = website.users * website.retention;
+	// The higher the total score, and the higher the banner ad cost is (relative to the max), the more users will pay to remove ads.
+	// This is a simple model that assumes that the more users are willing to pay, the more users will pay.
+	const totalScores = Object.values(website.scores).reduce(
+		(sum, val) => sum + val,
+		0,
+	);
+
+	// Calculate base willingness to pay based on site quality
+	const baseWillingnessToPay = Math.min(totalScores, 2000) / 2000;
+
+	// Calculate price sensitivity for ad-free - higher price means fewer users willing to pay
+	const adFreePriceSensitivity =
+		1 -
+		((website.monetization_config?.ad_free_revenue_per_user_per_week ??
+			MONETIZATION_LIMITS.AD_FREE.DEFAULT) -
+			MONETIZATION_LIMITS.AD_FREE.MIN) /
+			(MONETIZATION_LIMITS.AD_FREE.MAX - MONETIZATION_LIMITS.AD_FREE.MIN);
+
+	// More users will pay for ad-free if banner ads are aggressive (high cost)
+	const bannerAdAggression = website.monetization_config
+		? website.monetization_config.banner_ad_revenue_per_user_per_week /
+		  MONETIZATION_LIMITS.BANNER_ADS.MAX
+		: 0;
+
+	// Calculate final percentage that will pay for ad-free
+	let percentThatPayForAdFree =
+		baseWillingnessToPay *
+		adFreePriceSensitivity *
+		(0.3 + bannerAdAggression * 0.9) *
+		0.15;
+
+	// check if the site has ad free project completed
+	const adFreeProject = website.projects.find(
+		(p) => p.project.name === PROJECT_NAME.AD_FREE && p.completed,
+	);
+	if (!adFreeProject) {
+		percentThatPayForAdFree = 0;
+	}
+
+	// Add debug logging for Ad-Free calculations
+	console.log('Ad-Free Revenue Debug:', {
+		totalScores,
+		baseWillingness: baseWillingnessToPay,
+		priceSensitivity: adFreePriceSensitivity,
+		bannerAdAggression,
+		finalPercentage: percentThatPayForAdFree,
+		activeUsers: website.users,
+		retention: website.retention,
+		weeklyRevenue:
+			website.users *
+			website.retention *
+			percentThatPayForAdFree *
+			(website.monetization_config?.ad_free_revenue_per_user_per_week ??
+				MONETIZATION_LIMITS.AD_FREE.DEFAULT),
+	});
+
+	// Calculate Super Heart adoption rate with price sensitivity
+	const superHeartPriceSensitivity =
+		1 -
+		((website.monetization_config?.super_heart_revenue_per_user_per_week ??
+			MONETIZATION_LIMITS.SUPER_HEART.DEFAULT) -
+			MONETIZATION_LIMITS.SUPER_HEART.MIN) /
+			(MONETIZATION_LIMITS.SUPER_HEART.MAX -
+				MONETIZATION_LIMITS.SUPER_HEART.MIN);
+
+	const percentThatPayForSuperHeart =
+		baseWillingnessToPay * superHeartPriceSensitivity * website.retention;
+
+	const activeUsers = website.users;
+	const config = website.monetization_config || monetizationConfig;
 
 	switch (project.project.name) {
 		case PROJECT_NAME.BANNER_ADS:
-			return (
-				activeUsers * monetizationConfig.banner_ad_revenue_per_user_per_week
-			);
+			// Calculate users who see ads (total users minus ad-free users)
+			const usersWhoSeeAds = website.users * (1 - percentThatPayForAdFree);
+			const weeklyBannerRevenue =
+				usersWhoSeeAds *
+				config.banner_ad_revenue_per_user_per_week *
+				website.retention;
+
+			console.log('Banner Ad Revenue Calculation:', {
+				totalUsers: website.users,
+				usersWhoSeeAds,
+				revenuePerUserPerWeek: config.banner_ad_revenue_per_user_per_week,
+				weeklyRevenue: weeklyBannerRevenue,
+				monetizationConfig: config,
+			});
+			return weeklyBannerRevenue;
 		case PROJECT_NAME.SUPER_HEART:
+			// These features only work on retained users who are willing to pay
 			return (
 				activeUsers *
-				payingUserPercentage *
-				monetizationConfig.super_heart_revenue_per_user_per_week
+				website.retention *
+				percentThatPayForSuperHeart *
+				config.super_heart_revenue_per_user_per_week
 			);
 		case PROJECT_NAME.AD_FREE:
+			// These features only work on retained users who are willing to pay
 			return (
 				activeUsers *
-				payingUserPercentage *
-				monetizationConfig.ad_free_revenue_per_user_per_week
+				website.retention *
+				percentThatPayForAdFree *
+				config.ad_free_revenue_per_user_per_week
 			);
 		default:
 			return 0;
@@ -847,4 +956,64 @@ export function undoProject(
 	// the project is no longer in the completed projects list
 
 	return website;
+}
+
+const investmentNameStarters = [
+	'Horizon',
+	'Silicon',
+	'Digital',
+	'Tech',
+	'Millennium',
+	'Pacific',
+	'Gateway',
+	'Cyber',
+	'Future',
+	'American',
+	'Pioneer',
+	'Global',
+	'Micro',
+	'Info',
+];
+
+const investmentNameMiddles = [
+	'Valley',
+	'Frontier',
+	'Growth',
+	'Innovation',
+	'Systems',
+	'Wave',
+	'Tech',
+];
+
+const investmentNameEnders = [
+	'Ventures',
+	'Capital',
+	'Partners',
+	'Fund',
+	'Associates',
+	'Investments',
+	'Group',
+	'LLC',
+];
+
+export function generateInvestmentFirmName(): string {
+	const starter =
+		investmentNameStarters[
+			Math.floor(Math.random() * investmentNameStarters.length)
+		];
+	// 40% chance to include a middle name
+	const includeMiddle = Math.random() < 0.4;
+	const middle = includeMiddle
+		? ' ' +
+		  investmentNameMiddles[
+				Math.floor(Math.random() * investmentNameMiddles.length)
+		  ]
+		: '';
+	const ender =
+		' ' +
+		investmentNameEnders[
+			Math.floor(Math.random() * investmentNameEnders.length)
+		];
+
+	return starter + middle + ender;
 }

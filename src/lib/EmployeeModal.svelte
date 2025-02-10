@@ -7,6 +7,7 @@
 		getAvailableEmployees,
 		getEmployeeContributionScore,
 		getJobColor,
+		makeEmployeeHappy,
 		numberToMoney,
 		numberWithCommas,
 	} from './utils';
@@ -15,16 +16,16 @@
 	export let open = false;
 	export let onclose: () => void;
 	let closeModal = () => {
-		$paused = false;
 		open = false;
 		onclose();
 	};
 
 	let isIdle = false;
+	let costToMakeHappy = 0;
 
 	$: if (open) {
-		$paused = true;
 		isIdle = getAvailableEmployees($g.website).includes(e);
+		costToMakeHappy = (100 - e.happiness) * 2 * (e.salary / 15);
 	}
 </script>
 
@@ -51,6 +52,22 @@
 				closeModal();
 			}}>Fire</button
 		>
+		<button
+			class="mt-4 btn btn-success
+				{costToMakeHappy > $g.website.money || e.happiness > 75
+				? 'text-green-500 border-green-500 btn-disabled '
+				: ''}
+			"
+			on:click={() => {
+				e = makeEmployeeHappy(e, $g.website, costToMakeHappy);
+			}}
+		>
+			{e.happiness > 75
+				? 'Employee is happy'
+				: costToMakeHappy > $g.website.money
+					? 'Not enough money'
+					: 'Make Happy for ' + numberToMoney(costToMakeHappy)}
+		</button>
 	</div>
 	<form method="dialog" class="modal-backdrop">
 		<button on:click={closeModal}>close</button>

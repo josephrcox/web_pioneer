@@ -10,6 +10,9 @@
 		shipProject,
 		canUndoProject,
 		undoProject,
+		migrateProjectRecord,
+		isProjectEnabled,
+		normalizeWebsiteScores,
 	} from './utils';
 	import {
 		JOB_TYPE,
@@ -17,9 +20,13 @@
 		type projectRecord,
 		PROJECT_NAME,
 		FEATURE,
+		type employee,
 	} from './objects/types';
-	import { createEventDispatcher } from 'svelte';
+	import { createEventDispatcher, onMount, onDestroy } from 'svelte';
 	import EmployeeTile from './EmployeeTile.svelte';
+	import { MONETIZATION_LIMITS } from './objects/monetization';
+	import WebsiteScores from './WebsiteScores.svelte';
+	import EmployeeModal from './EmployeeModal.svelte';
 
 	export let isOpen = false;
 	const dispatch = createEventDispatcher();
@@ -40,36 +47,136 @@
 	let activeFilter: string | null = null;
 	let activeFeatureFilter: FEATURE | null = null;
 	let filteredProjects: project[] = [];
+	type ProjectCategory = 'CORE' | 'BUGS' | 'MARKETING' | 'MONETIZATION' | 'UX';
+
+	const PROJECT_CATEGORIES: Record<ProjectCategory, string> = {
+		CORE: 'Core Features',
+		BUGS: 'Bugs & Performance',
+		MARKETING: 'Marketing & Growth',
+		MONETIZATION: 'Monetization',
+		UX: 'User Experience',
+	};
+
+	let activeCategory: ProjectCategory | null = 'CORE';
+
+	let projectsSection: HTMLElement;
+	let availableProjectsSection: HTMLElement;
+
+	let employeeModalOpen = false;
+	let selectedEmployee: employee = {
+		id: -1,
+		name: '',
+		job: JOB_TYPE.ENGINEERING,
+		xp: 0,
+		date_hired: 0,
+		happiness: 0,
+		salary: 0,
+		contributions: 0,
+	};
+
+	// Handle escape key
+	function handleKeydown(event: KeyboardEvent) {
+		if (event.key === 'Escape' && isOpen && !showAssignPopup.show) {
+			handleCancel();
+		}
+	}
+
+	onMount(() => {
+		window.addEventListener('keydown', handleKeydown);
+	});
+
+	onDestroy(() => {
+		window.removeEventListener('keydown', handleKeydown);
+	});
 
 	// Reactive statement to update available projects when game state changes
 	$: if ($g.website) {
+		console.log('All projects:', $g.website.projects);
 		availableProjects = getAvailableProjects($g.website);
-		completedProjects = $g.website.projects.filter((p) => p.completed);
-		ongoingProjects = $g.website.projects.filter((p) => !p.completed);
+		completedProjects = $g.website.projects
+			.map(migrateProjectRecord)
+			.filter((p) => {
+				console.log(
+					'Checking project:',
+					p.project.name,
+					'completed:',
+					p.completed,
+				);
+				return p.completed;
+			});
+		ongoingProjects = $g.website.projects
+			.map(migrateProjectRecord)
+			.filter((p) => !p.completed);
+		console.log('Completed projects:', completedProjects);
 	}
 
-	// Separate reactive statement for filtering
-	$: {
-		// Start with available projects
-		let filtered = availableProjects;
+	// Helper function to determine project category
+	function getProjectCategory(project: project): ProjectCategory {
+		if (project.feature == FEATURE.CORE) {
+			return 'CORE';
+		}
+		if (project.feature == FEATURE.BUGS) {
+			return 'BUGS';
+		}
+		if (project.feature == FEATURE.MARKETING) {
+			return 'MARKETING';
+		}
+		if (project.feature == FEATURE.MONETIZATION) {
+			return 'MONETIZATION';
+		}
+		if (project.feature == FEATURE.UX) {
+			return 'UX';
+		}
+		return 'CORE';
+	}
 
-		// Apply feature filter if active
+	// Helper function to get available project count for a category
+	function getProjectCountForCategory(category: string): number {
+		if (!isValidCategory(category)) return 0;
+		return getAvailableProjects($g.website).filter(
+			(p) => getProjectCategory(p) === category,
+		).length;
+	}
+
+	// Reactive statement to update project counts when available projects change
+	$: {
+		if ($g.website) {
+			availableProjects = getAvailableProjects($g.website);
+			completedProjects = $g.website.projects
+				.map(migrateProjectRecord)
+				.filter((p) => p.completed);
+			ongoingProjects = $g.website.projects
+				.map(migrateProjectRecord)
+				.filter((p) => !p.completed);
+		}
+	}
+
+	// Reactive statement for filtered projects
+	$: {
+		let filtered = getAvailableProjects($g.website);
+
+		// First filter by category if selected
+		if (activeCategory) {
+			filtered = filtered.filter(
+				(p) => getProjectCategory(p) === activeCategory,
+			);
+		}
+
+		// Then apply feature filter if active
 		if (activeFeatureFilter) {
 			filtered = filtered.filter((p) => p.feature === activeFeatureFilter);
 		}
 
-		// Apply score filter if active
+		// Then apply score filter if active
 		if (activeFilter && isValidScoreKey(activeFilter)) {
 			filtered = filtered.filter((p) => {
 				const scoreImpact = p.scores[activeFilter as keyof typeof p.scores] > 0;
-				const continuousImpact =
-					p.is_continuous && p.target_score === activeFilter;
-				return scoreImpact || continuousImpact;
+				return scoreImpact;
 			});
 		}
 
-		// Update filtered projects
 		filteredProjects = filtered;
+		availableProjects = getAvailableProjects($g.website);
 	}
 
 	function handleCancel() {
@@ -152,52 +259,99 @@
 		return key in $g.website.scores;
 	}
 
-	function handleUndo(projectName: PROJECT_NAME) {
-		g.update((g) => {
-			if (!g.website) return g;
-			return {
-				...g,
-				website: undoProject(projectName, g.website),
-			};
-		});
+	// Helper function to safely get category label
+	function getCategoryLabel(category: string): string {
+		return category in PROJECT_CATEGORIES
+			? PROJECT_CATEGORIES[category as ProjectCategory]
+			: 'Unknown Category';
+	}
+
+	// Helper function to safely set category
+	function setCategory(category: string | null) {
+		if (!category) {
+			activeCategory = null;
+			return;
+		}
+		if (category in PROJECT_CATEGORIES) {
+			activeCategory = category as ProjectCategory;
+		}
+	}
+
+	// Helper function to check if a string is a valid category
+	function isValidCategory(category: string): category is ProjectCategory {
+		return category in PROJECT_CATEGORIES;
+	}
+
+	function openEmployeeModal(e: employee) {
+		selectedEmployee = e;
+		employeeModalOpen = true;
+	}
+
+	function closeEmployeeModal() {
+		employeeModalOpen = false;
 	}
 </script>
 
 {#if showAssignPopup.show}
 	<div class="modal modal-open z-100">
-		<div class="modal-box min-w-[50%] relative">
+		<div class="modal-box min-w-[50%] h-[50%] relative">
 			<button
 				class="btn btn-sm btn-circle absolute right-2 top-2"
 				on:click={() => (showAssignPopup.show = false)}>✕</button
 			>
-			<h3 class="text-xl mb-8">
+			<h3 class="text-xl mb-8 select-none">
 				Assign Employee to {showAssignPopup.project?.name}
 			</h3>
-			<div class="available-employees-container w-full overflow-y-auto">
-				<div class="grid grid-cols-2 gap-4 pb-4">
-					<!-- svelte-ignore a11y-click-events-have-key-events -->
-					{#each getAvailableEmployees($g.website, showAssignPopup.project ?? undefined) as employee}
-						<!-- svelte-ignore a11y-no-static-element-interactions -->
-						<div
-							class="employee-card border-2 border-[var(--color-crt)] p-3 flex items-center justify-between cursor-pointer hover:bg-black/30"
-							on:click={() => {
-								if (showAssignPopup.project) {
-									assignEmployee($g.website, showAssignPopup.project, employee);
-									g.update((g) => ({ ...g })); // Force UI update
-									showAssignPopup.show = false;
-								}
-							}}
-						>
-							<div class="text-xl">{employee.name}</div>
+			{#if getAvailableEmployees($g.website, showAssignPopup.project ?? undefined).length > 0}
+				<div class="available-employees-container w-full overflow-y-auto">
+					<div class="grid grid-cols-2 gap-4 pb-4">
+						<!-- svelte-ignore a11y-click-events-have-key-events -->
+						{#each getAvailableEmployees($g.website, showAssignPopup.project ?? undefined) as employee}
+							<!-- svelte-ignore a11y-no-static-element-interactions -->
 							<div
-								class="text-white px-2 py-1 {getJobColor(employee.job)} rounded"
+								class="employee-card select-none border-2 border-[var(--color-crt)] p-3 flex items-center justify-between cursor-pointer hover:bg-black/30"
+								on:click={() => {
+									if (showAssignPopup.project) {
+										assignEmployee(
+											$g.website,
+											showAssignPopup.project,
+											employee,
+										);
+										g.update((g) => ({ ...g })); // Force UI update
+										if (
+											getAvailableEmployees($g.website, showAssignPopup.project)
+												.length === 0
+										) {
+											showAssignPopup.show = false;
+										}
+									}
+								}}
 							>
-								{employee.job}
+								<div class="text-xl">{employee.name}</div>
+								<div
+									class="text-white px-2 py-1 {getJobColor(
+										employee.job,
+									)} rounded"
+								>
+									{employee.job}
+								</div>
 							</div>
-						</div>
-					{/each}
+						{/each}
+					</div>
 				</div>
-			</div>
+			{:else}
+				<div class="text-center text-lg">
+					No employees available to assign to this project.
+				</div>
+				<!-- button to open hiring popup -->
+				<button
+					class="btn btn-primary w-full mt-4"
+					on:click={() => {
+						showAssignPopup.show = false;
+						$hiringPopupOpen = true;
+					}}>Hire Employees</button
+				>
+			{/if}
 		</div>
 		<form method="dialog" class="modal-backdrop">
 			<button on:click={() => (showAssignPopup.show = false)}>close</button>
@@ -206,638 +360,540 @@
 {/if}
 
 {#if isOpen}
-	<div class="modal w-full modal-open z-50 overflow-y-auto">
-		<div class="modal-box min-w-[90%] relative max-h-[90vh] overflow-y-auto">
-			<div class="absolute right-2 top-2 flex gap-2">
-				<button
-					class="btn btn-sm btn-error"
-					on:click={() => {
-						const currentGame = $g;
-						if (currentGame.website) {
-							const updatedWebsite = {
-								...currentGame.website,
-								users: 0,
-								money: 0,
-							};
-							g.set({
-								...currentGame,
-								website: updatedWebsite,
-							});
-						}
-					}}
-				>
-					Reset Users
-				</button>
-				<button class="btn btn-sm btn-circle" on:click={handleCancel}>
-					✕
-				</button>
-			</div>
-			<h3 class="title text-xl mb-6">Projects</h3>
-			<div class="projects-container w-full overflow-y-auto pr-10">
+	<div class="fixed inset-0 z-50 bg-[var(--color-terminal)] overflow-y-auto">
+		<div class="w-full h-full p-4">
+			<div class="relative h-full">
+				<div class="absolute right-2 top-2 flex gap-2">
+					<button
+						class="btn btn-sm btn-error"
+						on:click={() => {
+							const currentGame = $g;
+							if (currentGame.website) {
+								const updatedWebsite = {
+									...currentGame.website,
+									users: 0,
+									money: 0,
+								};
+								g.set({
+									...currentGame,
+									website: updatedWebsite,
+								});
+							}
+						}}
+					>
+						Reset Users
+					</button>
+					<button class="btn btn-sm btn-circle" on:click={handleCancel}>
+						✕
+					</button>
+				</div>
+				<h3 class="title text-xl mb-6">Projects</h3>
 				<div
-					class="sticky top-0 bg-black/90 pt-2 pb-4 mb-4 z-10 border-b border-[var(--color-crt)]"
+					class="projects-container w-full overflow-y-auto pr-10 pb-24"
+					bind:this={projectsSection}
 				>
-					<div class="flex flex-col gap-4 px-2 py-1">
-						<!-- Feature filters -->
-						<div class="flex flex-wrap gap-2">
-							<span class="text-sm opacity-70 mr-2">Features:</span>
-							{#each Object.values(FEATURE) as feature (feature)}
+					<!-- Categories -->
+					<div class="mb-8 sticky top-0 bg-[var(--color-terminal)] z-10">
+						<h4 class="text-lg mb-4 opacity-1">Select Project Category:</h4>
+						<div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
+							{#each Object.keys(PROJECT_CATEGORIES) as category}
 								<button
-									class="px-3 py-1 rounded-full text-sm capitalize transition-all
-										{activeFeatureFilter === feature
-										? 'bg-[var(--color-crt)] text-black font-bold'
-										: 'border border-[var(--color-crt)] text-[var(--color-crt)] hover:bg-[var(--color-crt)]/10'}"
+									class="category-card border-2 border-[var(--color-crt)] p-2 rounded-lg text-center transition-all hover:bg-[var(--color-crt)]/10
+										{activeCategory === category ? 'bg-[var(--color-crt)]' : 'opacity-50'}"
 									on:click={() => {
-										if (activeFeatureFilter === feature) {
+										if (activeCategory === category) {
+											setCategory(null);
+										} else {
+											setCategory(category);
 											activeFeatureFilter = null;
-										} else {
-											activeFeatureFilter = feature;
-										}
-									}}
-								>
-									{feature}
-									{#if activeFeatureFilter === feature}
-										<span class="ml-2">✕</span>
-									{/if}
-								</button>
-							{/each}
-						</div>
-
-						<!-- Score filters -->
-						<div class="flex flex-wrap gap-2">
-							<span class="text-sm opacity-70 mr-2">Scores:</span>
-							{#each Object.keys($g.website.scores) as score (score)}
-								<button
-									class="px-3 py-1 rounded-full text-sm capitalize transition-all
-										{activeFilter === score
-										? 'bg-[var(--color-crt)] text-black font-bold'
-										: 'border border-[var(--color-crt)] text-[var(--color-crt)] hover:bg-[var(--color-crt)]/10'}"
-									on:click={() => {
-										if (activeFilter === score) {
 											activeFilter = null;
-										} else {
-											activeFilter = score;
+											// Wait for DOM update
+											setTimeout(() => {
+												availableProjectsSection?.scrollIntoView({
+													behavior: 'smooth',
+													block: 'center',
+												});
+											}, 100);
 										}
 									}}
 								>
-									{score}
-									{#if activeFilter === score}
-										<span class="ml-2">✕</span>
-									{/if}
+									<div class="text-lg font-bold">
+										{getCategoryLabel(category)}
+									</div>
+									<div class="text-sm opacity-70 mt-1">
+										{getProjectCountForCategory(category)} available
+									</div>
 								</button>
 							{/each}
 						</div>
 					</div>
-				</div>
 
-				{#if !activeFilter && !activeFeatureFilter}
-					{#if ongoingProjects.length > 0}
-						<h4 class="text-xl mb-4 text-[var(--color-crt)]">
-							Ongoing Projects
-						</h4>
-						<div
-							class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8 overflow-y-auto"
-						>
-							{#each ongoingProjects as projectRecord}
-								<div
-									class="project-card border-2 border-[var(--color-crt)] p-4"
-								>
-									<div class="text-2xl font-bold mb-2">
-										{projectRecord.project.name}
-									</div>
-									<div class="text-lg opacity-80 mb-4">
-										{projectRecord.project.requirements}
-									</div>
-									<div class="flex flex-row justify-between">
-										<div class="mb-4 max-w-[50%] mr-6">
-											<h5 class="text-xl underline mb-2">Remaining Work</h5>
-											<div class="gap-0 text-md">
-												<ul class="list-disc ml-8 w-max space-y-2">
-													{#if projectRecord.project.costs.product > 0}
-														<li class="text-md">
-															Product:
-															{#if projectRecord.costs_remaining.product <= 0}
-																<span class="text-green-500">✓</span>
-																<span class="opacity-50"
-																	>({projectRecord.project.costs.product.toFixed(
-																		1,
-																	)})</span
-																>
-															{:else}
-																<span
-																	class="text-[var(--color-crt)] {getJobColor(
-																		JOB_TYPE.PRODUCT,
-																	)}"
-																	>{projectRecord.costs_remaining.product.toFixed(
-																		1,
-																	)}</span
-																>
-															{/if}
-														</li>
-													{/if}
-													{#if projectRecord.project.costs.engineering > 0}
-														<li class="text-md">
-															Engineering:
-															{#if projectRecord.costs_remaining.engineering <= 0}
-																<span class="text-green-500">✓</span>
-																<span class="opacity-50"
-																	>({projectRecord.project.costs.engineering.toFixed(
-																		1,
-																	)})</span
-																>
-															{:else}
-																<span
-																	class="text-[var(--color-crt)] {getJobColor(
-																		JOB_TYPE.ENGINEERING,
-																	)}"
-																	>{projectRecord.costs_remaining.engineering.toFixed(
-																		1,
-																	)}</span
-																>
-															{/if}
-														</li>
-													{/if}
-													{#if projectRecord.project.costs.design > 0}
-														<li class="text-md">
-															Design:
-															{#if projectRecord.costs_remaining.design <= 0}
-																<span class="text-green-500">✓</span>
-																<span class="opacity-50"
-																	>({projectRecord.project.costs.design})</span
-																>
-															{:else}
-																<span
-																	class="text-[var(--color-crt)] {getJobColor(
-																		JOB_TYPE.DESIGN,
-																	)}"
-																	>{projectRecord.costs_remaining.design.toFixed(
-																		1,
-																	)}</span
-																>
-															{/if}
-														</li>
-													{/if}
-													{#if projectRecord.project.costs.growth > 0}
-														<li class="text-md">
-															Growth:
-															{#if projectRecord.costs_remaining.growth <= 0}
-																<span class="text-green-500">✓</span>
-																<span class="opacity-50"
-																	>({projectRecord.project.costs.growth})</span
-																>
-															{:else}
-																<span
-																	class="text-[var(--color-crt)] {getJobColor(
-																		JOB_TYPE.GROWTH,
-																	)}"
-																	>{projectRecord.costs_remaining.growth.toFixed(
-																		1,
-																	)}</span
-																>
-															{/if}
-														</li>
-													{/if}
-												</ul>
+					{#if !activeFilter && !activeFeatureFilter}
+						{#if ongoingProjects.length > 0}
+							<h4 class="text-xl mb-4 text-[var(--color-crt)]">
+								Ongoing Projects
+							</h4>
+							<div
+								class="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-4 mb-8"
+							>
+								{#each ongoingProjects as projectRecord}
+									<div class="project-card">
+										<div class="flex flex-col h-full">
+											<!-- Header -->
+											<div class="flex justify-between items-start mb-4">
+												<div>
+													<h3 class="text-2xl font-bold">
+														{projectRecord.project.name}
+													</h3>
+													<div class="text-sm opacity-80 mt-1 line-clamp-2">
+														{projectRecord.project.requirements}
+													</div>
+												</div>
+												<div class="feature-tag">
+													{projectRecord.project.feature}
+												</div>
 											</div>
-										</div>
-										<div>
-											<h5 class="text-xl underline mb-2">Assignees</h5>
-											<div
-												class="flex flex-wrap gap-2 mb-4 max-w-[100%] whitespace-nowrap"
-											>
-												{#each projectRecord.assignees as employeeId}
-													{#if $g.website}
-														{@const foundEmployee = $g.website.employees.find(
-															(e) => e.id === employeeId,
-														)}
-														{#if foundEmployee !== undefined}
-															<EmployeeTile
-																e={foundEmployee}
-																displayName={true}
-															/>
+
+											<!-- Progress Section -->
+											<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+												<!-- Work Progress -->
+												<div class="progress-section">
+													<h4 class="section-title">Progress</h4>
+													<div class="space-y-2">
+														{#if projectRecord.project.costs.product > 0}
+															<div class="progress-item">
+																<span>Product</span>
+																<div class="flex items-center gap-2">
+																	{#if projectRecord.costs_remaining.product <= 0}
+																		<div
+																			class="text-[var(--color-crt)] text-xl"
+																		>
+																			✓
+																		</div>
+																	{:else}
+																		<div class="progress-bar">
+																			<div
+																				class="progress-fill {getJobColor(
+																					JOB_TYPE.PRODUCT,
+																				)}"
+																				style="width: {Math.max(
+																					0,
+																					Math.min(
+																						100,
+																						(1 -
+																							projectRecord.costs_remaining
+																								.product /
+																								projectRecord.project.costs
+																									.product) *
+																							100,
+																					),
+																				)}%"
+																			></div>
+																		</div>
+																		<span class="text-sm">
+																			{Math.floor(
+																				projectRecord.project.costs.product -
+																					projectRecord.costs_remaining.product,
+																			)}/{projectRecord.project.costs.product}
+																		</span>
+																	{/if}
+																</div>
+															</div>
 														{/if}
-													{/if}
-												{/each}
+														{#if projectRecord.project.costs.engineering > 0}
+															<div class="progress-item">
+																<span>Engineering</span>
+																<div class="flex items-center gap-2">
+																	{#if projectRecord.costs_remaining.engineering <= 0}
+																		<div
+																			class="text-[var(--color-crt)] text-xl"
+																		>
+																			✓
+																		</div>
+																	{:else}
+																		<div class="progress-bar">
+																			<div
+																				class="progress-fill {getJobColor(
+																					JOB_TYPE.ENGINEERING,
+																				)}"
+																				style="width: {Math.max(
+																					0,
+																					Math.min(
+																						100,
+																						(1 -
+																							projectRecord.costs_remaining
+																								.engineering /
+																								projectRecord.project.costs
+																									.engineering) *
+																							100,
+																					),
+																				)}%"
+																			></div>
+																		</div>
+																		<span class="text-sm">
+																			{Math.floor(
+																				projectRecord.project.costs
+																					.engineering -
+																					projectRecord.costs_remaining
+																						.engineering,
+																			)}/{projectRecord.project.costs
+																				.engineering}
+																		</span>
+																	{/if}
+																</div>
+															</div>
+														{/if}
+														{#if projectRecord.project.costs.design > 0}
+															<div class="progress-item">
+																<span>Design</span>
+																<div class="flex items-center gap-2">
+																	{#if projectRecord.costs_remaining.design <= 0}
+																		<div
+																			class="text-[var(--color-crt)] text-xl"
+																		>
+																			✓
+																		</div>
+																	{:else}
+																		<div class="progress-bar">
+																			<div
+																				class="progress-fill {getJobColor(
+																					JOB_TYPE.DESIGN,
+																				)}"
+																				style="width: {Math.max(
+																					0,
+																					Math.min(
+																						100,
+																						(1 -
+																							projectRecord.costs_remaining
+																								.design /
+																								projectRecord.project.costs
+																									.design) *
+																							100,
+																					),
+																				)}%"
+																			></div>
+																		</div>
+																		<span class="text-sm">
+																			{Math.floor(
+																				projectRecord.project.costs.design -
+																					projectRecord.costs_remaining.design,
+																			)}/{projectRecord.project.costs.design}
+																		</span>
+																	{/if}
+																</div>
+															</div>
+														{/if}
+														{#if projectRecord.project.costs.growth > 0}
+															<div class="progress-item">
+																<span>Growth</span>
+																<div class="flex items-center gap-2">
+																	{#if projectRecord.costs_remaining.growth <= 0}
+																		<div
+																			class="text-[var(--color-crt)] text-xl"
+																		>
+																			✓
+																		</div>
+																	{:else}
+																		<div class="progress-bar">
+																			<div
+																				class="progress-fill {getJobColor(
+																					JOB_TYPE.GROWTH,
+																				)}"
+																				style="width: {Math.max(
+																					0,
+																					Math.min(
+																						100,
+																						(1 -
+																							projectRecord.costs_remaining
+																								.growth /
+																								projectRecord.project.costs
+																									.growth) *
+																							100,
+																					),
+																				)}%"
+																			></div>
+																		</div>
+																		<span class="text-sm">
+																			{Math.floor(
+																				projectRecord.project.costs.growth -
+																					projectRecord.costs_remaining.growth,
+																			)}/{projectRecord.project.costs.growth}
+																		</span>
+																	{/if}
+																</div>
+															</div>
+														{/if}
+													</div>
+												</div>
+
+												<!-- Assignees -->
+												<div class="assignees-section">
+													<h4 class="section-title">Assignees</h4>
+													<div class="flex flex-wrap gap-2">
+														{#each projectRecord.assignees as employeeId}
+															{#if $g.website}
+																{@const foundEmployee =
+																	$g.website.employees.find(
+																		(e) => e.id === employeeId,
+																	)}
+																{#if foundEmployee !== undefined}
+																	<div
+																		class="text-center select-none {getJobColor(
+																			foundEmployee.job,
+																		)} text-md px-2 cursor-pointer whitespace-nowrap overflow-hidden align-middle items-center flex justify-center"
+																		on:click={() =>
+																			openEmployeeModal(foundEmployee)}
+																	>
+																		<span
+																			class="text-sm align-middle items-center flex justify-center select-none"
+																		>
+																			{foundEmployee.name}
+																			{foundEmployee.happiness > 70
+																				? '😃'
+																				: foundEmployee.happiness > 40
+																					? '🫤'
+																					: '😡'}
+																		</span>
+																	</div>
+																{/if}
+															{/if}
+														{/each}
+													</div>
+												</div>
 											</div>
-										</div>
-									</div>
-									<div
-										class="flex flex-col gap-2
-									
-									"
-									>
-										{#if !isProjectComplete(projectRecord)}
-											<button
-												class="btn btn-md btn-primary w-full"
-												on:click={() => {
-													showAssignPopup.project = projectRecord.project;
-													showAssignPopup.show = true;
-												}}
-											>
-												Assign Employee
-											</button>
-											<button
-												class="btn btn-md btn-error w-full"
-												on:click={() => abandonProject(projectRecord.project)}
-											>
-												Abandon Project
-											</button>
-										{:else}
-											<button
-												class="btn btn-md btn-accent w-full rainbow-btn"
-												on:click={() => {
-													if ($g.website) {
-														const updatedProject = shipProject(projectRecord);
-														g.update((g) => {
-															// Update website scores when shipping a project
-															const updatedScores = { ...g.website.scores };
-															Object.entries(
-																projectRecord.project.scores,
-															).forEach(([key, value]) => {
-																if (isValidScoreKey(key)) {
-																	updatedScores[key] += value;
-																}
-															});
 
-															// Iterate over assignees and make them happier
-															for (let eid of projectRecord.assignees) {
-																const employee = g.website.employees.find(
-																	(e) => e.id === eid,
-																);
-
-																if (employee) {
-																	// Junior employees get more happiness from projects.
-																	const happinessChange = Math.round(
-																		Math.random() *
-																			5 *
-																			((12000 - employee.xp) / 5000),
+											<!-- Actions -->
+											<div class="flex gap-2 mt-auto pt-4">
+												{#if !isProjectComplete(projectRecord)}
+													<button
+														class="btn btn-sm btn-primary flex-1"
+														on:click={() => {
+															showAssignPopup.project = projectRecord.project;
+															showAssignPopup.show = true;
+														}}
+													>
+														Assign Employee
+													</button>
+													<button
+														class="btn btn-sm btn-error"
+														on:click={() =>
+															abandonProject(projectRecord.project)}
+													>
+														Abandon
+													</button>
+												{:else}
+													<button
+														class="btn btn-sm btn-accent rainbow-btn flex-1"
+														on:click={() => {
+															if ($g.website) {
+																const projectIndex =
+																	$g.website.projects.findIndex(
+																		(p) =>
+																			p.project.name ===
+																			projectRecord.project.name,
 																	);
-																	employee.happiness += happinessChange;
+																if (projectIndex !== -1) {
+																	g.update((g) => {
+																		if (!g.website) return g;
+																		const updatedProjects = [
+																			...g.website.projects,
+																		];
+																		updatedProjects[projectIndex] =
+																			shipProject(projectRecord);
+																		return {
+																			...g,
+																			website: {
+																				...g.website,
+																				projects: updatedProjects,
+																			},
+																		};
+																	});
 																}
 															}
-
-															return {
-																...g,
-																website: {
-																	...g.website,
-																	scores: updatedScores,
-																	projects: g.website.projects.map((p) =>
-																		p.project.name ===
-																		projectRecord.project.name
-																			? updatedProject
-																			: p,
-																	),
-																},
-															};
-														});
-													}
-												}}
-											>
-												SHIP IT!
-											</button>
-										{/if}
-									</div>
-								</div>
-							{/each}
-						</div>
-					{/if}
-
-					{#if completedProjects.length > 0}
-						<h4 class="text-xl mb-4 text-[var(--color-crt)]">
-							Completed Projects
-						</h4>
-						<div class="grid grid-cols-4 gap-4 overflow-y-auto">
-							{#each completedProjects as projectRecord}
-								<div
-									class="project-card border-2 border-[var(--color-crt)] p-4"
-								>
-									<div class="text-2xl font-bold mb-2">
-										{projectRecord.project.name}
-										{#if projectRecord.project.is_continuous}
-											<span
-												class="text-sm bg-blue-500 text-white px-2 py-1 rounded-full ml-2"
-												>Continuous</span
-											>
-										{/if}
-									</div>
-									<div class="text-lg opacity-80">
-										{projectRecord.project.requirements}
-									</div>
-									{#if projectRecord.project.name === PROJECT_NAME.NEWSPAPER_ADS}
-										<div class="mt-4">
-											<div class="font-bold mb-2">Weekly Ad Spend:</div>
-											<input
-												type="range"
-												min="0"
-												max="10000"
-												value={projectRecord.project.weekly_costs?.money ?? 500}
-												step="100"
-												class="range range-primary range-sm"
-												on:change={(e) => {
-													const target = e.currentTarget;
-													g.update((g) => {
-														if (!g.website) return g;
-														return {
-															...g,
-															website: {
-																...g.website,
-																projects: g.website.projects.map((p) =>
-																	p.project.name === projectRecord.project.name
-																		? {
-																				...p,
-																				project: {
-																					...p.project,
-																					weekly_costs: {
-																						money: parseInt(target.value),
-																					},
-																				},
-																				rules: {
-																					...p.rules,
-																					weekly_ad_spend: parseInt(
-																						target.value,
-																					),
-																				},
-																			}
-																		: p,
-																),
-															},
-														};
-													});
-												}}
-											/>
-											<div
-												class="w-full flex justify-between text-xs px-2 mt-1"
-											>
-												<span>$500</span>
-												<span>$10,000</span>
-											</div>
-											<div class="text-center mt-1">
-												${projectRecord.project.weekly_costs?.money?.toLocaleString() ??
-													'500'}
+														}}
+													>
+														SHIP IT!
+													</button>
+												{/if}
 											</div>
 										</div>
-									{/if}
-									{#if canUndoProject(projectRecord.project.name, $g.website)}
-										<button
-											class="px-2 py-1 bg-red-700 hover:bg-red-600 rounded text-sm mt-4"
-											on:click={() => handleUndo(projectRecord.project.name)}
-										>
-											Undo
-										</button>
-									{/if}
-								</div>
-							{/each}
-						</div>
-					{/if}
-				{/if}
-
-				<h4 class="text-xl mb-4 text-[var(--color-crt)] mt-4">
-					{activeFilter || activeFeatureFilter
-						? 'Filtered Projects'
-						: 'Available Projects'}
-				</h4>
-				{#if availableProjects.length === 0}
-					<div class="text-center py-8">
-						<p class="text-xl">No projects available.</p>
-					</div>
-				{:else}
-					<div class="grid grid-cols-1 gap-4 overflow-y-auto">
-						{#each filteredProjects as project}
-							<div class="project-card border-2 border-[var(--color-crt)] p-4">
-								<div class="flex flex-row gap-4">
-									<div class="flex flex-col w-[40%]">
-										<div class="text-3xl mb-2">
-											{project.name}
-											{#if project.is_continuous}
-												<span
-													class="text-sm bg-blue-500 text-white px-2 py-1 rounded-full ml-2"
-													>Continuous</span
-												>
-											{/if}
-										</div>
-										<div class="text-lg opacity-80 mb-4">
-											{project.requirements}
-										</div>
-										<div
-											class="inline-block border-2 border-[var(--color-crt)] rounded px-3 py-1 text-[var(--color-crt)] w-max"
-										>
-											{project.feature}
-										</div>
-										{#if project.is_continuous}
-											<div class="mt-4 text-sm">
-												<div class="font-bold mb-2">Required Roles:</div>
-												{#each Object.entries(project.required_roles || {}) as [role, count]}
-													<div class="ml-2">• {count}x {role}</div>
-												{/each}
-												{#if project.name === PROJECT_NAME.NEWSPAPER_ADS}
-													<div class="mt-4">
-														<div class="font-bold mb-2">Weekly Ad Spend:</div>
-														<input
-															type="range"
-															min="500"
-															max="10000"
-															value="500"
-															step="100"
-															class="range range-primary range-sm"
-															on:change={function (e) {
-																const target = e.currentTarget;
-																project.weekly_costs = {
-																	money: parseInt(target.value),
-																};
-															}}
-														/>
-														<div
-															class="w-full flex justify-between text-xs px-2"
-														>
-															<span>$500</span>
-															<span>$10,000</span>
-														</div>
-														<div class="text-center mt-1">
-															${project.weekly_costs?.money?.toLocaleString() ??
-																'500'}
-														</div>
-													</div>
-												{:else if project.weekly_costs?.money}
-													<div class="mt-2 font-bold">Weekly Cost:</div>
-													<div class="ml-2">
-														• ${project.weekly_costs.money.toLocaleString()}
-													</div>
-												{/if}
-												<div class="mt-2 font-bold">Affects:</div>
-												<div class="ml-2">• {project.target_score}</div>
-											</div>
-										{/if}
-										<button
-											class="btn mt-4 w-fit {!hasRequiredJobTypes(project)[0]
-												? 'text-red-500 btn-error hover:text-[var(--color-crt)] hover:bg-red-800'
-												: 'btn-primary'}"
-											style={!hasRequiredJobTypes(project)[0]
-												? 'border-color:red;background-color:red;color:white;'
-												: ''}
-											on:click={() => {
-												if (hasRequiredJobTypes(project)[0]) {
-													startProject(project);
-													// clear all filters
-													activeFilter = null;
-													activeFeatureFilter = null;
-												} else {
-													$projectSearchPopupOpen = false;
-													$hiringPopupOpen = true;
-												}
-											}}
-										>
-											{#if hasRequiredJobTypes(project)[0]}
-												Start project
-											{:else}
-												You need: {hasRequiredJobTypes(project)[1]}
-											{/if}
-										</button>
 									</div>
-									<div class="w-[30%]">
-										<h5 class="text-xl mb-2 underline">Setup Costs:</h5>
-										<div>
-											<ul class="list-disc ml-8 w-max space-y-3">
-												{#if project.costs.product > 0}
-													<li>
-														Product: <span
-															class="text-[var(--color-crt)] {getJobColor(
-																JOB_TYPE.PRODUCT,
-															)}">{project.costs.product.toFixed(1)}</span
-														>
-													</li>
-												{/if}
-												{#if project.costs.engineering > 0}
-													<li>
-														Engineering: <span
-															class="text-[var(--color-crt)] {getJobColor(
-																JOB_TYPE.ENGINEERING,
-															)}">{project.costs.engineering.toFixed(1)}</span
-														>
-													</li>
-												{/if}
-												{#if project.costs.design > 0}
-													<li>
-														Design: <span
-															class="text-[var(--color-crt)] {getJobColor(
-																JOB_TYPE.DESIGN,
-															)}">{project.costs.design.toFixed(1)}</span
-														>
-													</li>
-												{/if}
-												{#if project.costs.growth > 0}
-													<li>
-														Growth: <span
-															class="text-[var(--color-crt)] {getJobColor(
-																JOB_TYPE.GROWTH,
-															)}">{project.costs.growth.toFixed(1)}</span
-														>
-													</li>
-												{/if}
-											</ul>
-										</div>
-									</div>
-									<div class="w-[30%]">
-										<h5 class="text-xl mb-2 underline">Initial Impact:</h5>
-										<div class="space-y-1">
-											{#if project.scores.reliability !== 0}
-												<div>
-													Reliability <span
-														class={project.scores.reliability > 0
-															? 'text-[var(--color-crt)]'
-															: 'text-red-500'}
-														>{project.scores.reliability > 0 ? '+' : ''}{project
-															.scores.reliability}</span
-													>
-												</div>
-											{/if}
-											{#if project.scores.performance !== 0}
-												<div>
-													Performance <span
-														class={project.scores.performance > 0
-															? 'text-[var(--color-crt)]'
-															: 'text-red-500'}
-														>{project.scores.performance > 0 ? '+' : ''}{project
-															.scores.performance}</span
-													>
-												</div>
-											{/if}
-											{#if project.scores.easeOfUse !== 0}
-												<div>
-													Ease of Use <span
-														class={project.scores.easeOfUse > 0
-															? 'text-[var(--color-crt)]'
-															: 'text-red-500'}
-														>{project.scores.easeOfUse > 0 ? '+' : ''}{project
-															.scores.easeOfUse}</span
-													>
-												</div>
-											{/if}
-											{#if project.scores.functionality !== 0}
-												<div>
-													Functionality <span
-														class={project.scores.functionality > 0
-															? 'text-[var(--color-crt)]'
-															: 'text-red-500'}
-														>{project.scores.functionality > 0
-															? '+'
-															: ''}{project.scores.functionality}</span
-													>
-												</div>
-											{/if}
-											{#if project.scores.attractiveness !== 0}
-												<div>
-													Attractiveness <span
-														class={project.scores.attractiveness > 0
-															? 'text-[var(--color-crt)]'
-															: 'text-red-500'}
-														>{project.scores.attractiveness > 0
-															? '+'
-															: ''}{project.scores.attractiveness}</span
-													>
-												</div>
-											{/if}
-											{#if project.scores.security !== 0}
-												<div>
-													Security <span
-														class={project.scores.security > 0
-															? 'text-[var(--color-crt)]'
-															: 'text-red-500'}
-														>{project.scores.security > 0 ? '+' : ''}{project
-															.scores.security}</span
-													>
-												</div>
-											{/if}
-											{#if project.scores.virality !== 0}
-												<div>
-													Virality <span
-														class={project.scores.virality > 0
-															? 'text-[var(--color-crt)]'
-															: 'text-red-500'}
-														>{project.scores.virality > 0 ? '+' : ''}{project
-															.scores.virality}</span
-													>
-												</div>
-											{/if}
-										</div>
-									</div>
-								</div>
+								{/each}
 							</div>
-						{/each}
-					</div>
-				{/if}
+						{/if}
+
+						<!-- Available Projects -->
+						<h4
+							class="text-xl mb-4 text-[var(--color-crt)] mt-4"
+							bind:this={availableProjectsSection}
+						>
+							{activeCategory ? getCategoryLabel(activeCategory) : 'Available'} Projects
+							{#if activeFilter || activeFeatureFilter}(Filtered){/if}
+						</h4>
+						{#if filteredProjects.length === 0}
+							<div class="text-center py-8">
+								<p class="text-xl">No projects available in this category.</p>
+							</div>
+						{:else}
+							<div
+								class="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-4"
+							>
+								{#each filteredProjects as project}
+									<div class="project-card">
+										<div class="flex flex-col h-full">
+											<!-- Header -->
+											<div class="flex justify-between items-start mb-4">
+												<div>
+													<h3 class="text-xl font-bold">{project.name}</h3>
+													<div class="opacity-80 mt-1 line-clamp-2">
+														{project.requirements}
+													</div>
+												</div>
+												<div class="feature-tag">
+													{project.feature}
+												</div>
+											</div>
+
+											<!-- Costs and Impact -->
+											<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+												<!-- Setup Costs -->
+												<div class="cost-section">
+													<h4 class="section-title">Required Work</h4>
+													<div class="space-y-2">
+														{#if project.costs.product > 0}
+															<div class="cost-item">
+																<span>Product</span>
+																<span class={getJobColor(JOB_TYPE.PRODUCT)}
+																	>{project.costs.product}</span
+																>
+															</div>
+														{/if}
+														{#if project.costs.engineering > 0}
+															<div class="cost-item">
+																<span>Engineering</span>
+																<span class={getJobColor(JOB_TYPE.ENGINEERING)}
+																	>{project.costs.engineering}</span
+																>
+															</div>
+														{/if}
+														{#if project.costs.design > 0}
+															<div class="cost-item">
+																<span>Design</span>
+																<span class={getJobColor(JOB_TYPE.DESIGN)}
+																	>{project.costs.design}</span
+																>
+															</div>
+														{/if}
+														{#if project.costs.growth > 0}
+															<div class="cost-item">
+																<span>Growth</span>
+																<span class={getJobColor(JOB_TYPE.GROWTH)}
+																	>{project.costs.growth}</span
+																>
+															</div>
+														{/if}
+													</div>
+												</div>
+
+												<!-- Impact -->
+												<div class="impact-section">
+													<h4 class="section-title">Impact</h4>
+													<div class="space-y-2">
+														{#each Object.entries(project.scores).sort((a, b) => b[1] - a[1]) as [scoreName, value]}
+															{#if value !== 0}
+																<div class="impact-item">
+																	<span
+																		>{scoreName[0].toUpperCase() +
+																			scoreName.slice(1)}</span
+																	>
+																	<span
+																		class={value > 0
+																			? 'text-[var(--color-crt)]'
+																			: 'text-red-500'}
+																		>{value > 0 ? '+' : ''}{value}</span
+																	>
+																</div>
+															{/if}
+														{/each}
+													</div>
+												</div>
+											</div>
+
+											<!-- Action Button -->
+											<div class="mt-auto pt-4">
+												<button
+													class="btn btn-sm w-full {!hasRequiredJobTypes(
+														project,
+													)[0]
+														? 'btn-error'
+														: 'btn-primary'}"
+													on:click={() => {
+														if (hasRequiredJobTypes(project)[0]) {
+															startProject(project);
+															activeFilter = null;
+															activeFeatureFilter = null;
+														} else {
+															$projectSearchPopupOpen = false;
+															$hiringPopupOpen = true;
+														}
+													}}
+												>
+													{#if hasRequiredJobTypes(project)[0]}
+														Start Project
+													{:else}
+														Need to hire: {hasRequiredJobTypes(project)[1]}
+													{/if}
+												</button>
+											</div>
+										</div>
+									</div>
+								{/each}
+							</div>
+						{/if}
+					{:else}
+						<div class="text-center py-8 opacity-70">
+							<p class="text-xl">
+								Select a category to view available projects
+							</p>
+						</div>
+					{/if}
+				</div>
 			</div>
 		</div>
+		<div
+			class="fixed bottom-0 left-0 w-full px-6 py-4 bg-[var(--color-terminal)] border-t-4 border-[var(--color-crt)] z-50"
+		>
+			<WebsiteScores compact={true} />
+		</div>
+
 		<form method="dialog" class="modal-backdrop">
 			<button on:click={handleCancel}>close</button>
 		</form>
 	</div>
 {/if}
 
+<div class="employee-tiles-container">
+	{#each $g.website?.employees ?? [] as e}
+		<EmployeeTile {e} displayName={false} />
+	{/each}
+</div>
+
+{#if $g.website}
+	<EmployeeModal
+		e={selectedEmployee}
+		open={employeeModalOpen}
+		onclose={closeEmployeeModal}
+	/>
+{/if}
+
 <style>
 	.projects-container {
-		max-height: 70vh;
-		scrollbar-width: thin;
 		scrollbar-color: var(--color-crt) var(--color-terminal);
+		height: calc(100vh - 180px);
+		padding-bottom: 80px; /* Space for fixed footer */
+		padding-right: 8px; /* Always reserve space for scrollbar */
+		overflow-y: scroll; /* Always show scrollbar space */
+		scrollbar-gutter: stable; /* Modern browsers: reserve scrollbar space */
 	}
 
 	.projects-container::-webkit-scrollbar {
@@ -858,6 +914,8 @@
 		max-height: 24rem;
 		scrollbar-width: thin;
 		scrollbar-color: var(--color-crt) var(--color-terminal);
+		overflow-y: scroll; /* Always show scrollbar space */
+		scrollbar-gutter: stable; /* Modern browsers: reserve scrollbar space */
 	}
 
 	.available-employees-container::-webkit-scrollbar {
@@ -875,12 +933,13 @@
 	}
 
 	.project-card {
-		background: rgba(0, 0, 0, 0.3);
-		border-radius: 0.5rem;
+		@apply border-2 border-[var(--color-crt)] p-4 bg-black/20 rounded-lg;
 		transition: all 0.2s ease-in-out;
 	}
 
 	.project-card:hover {
+		@apply bg-black/30;
+		transform: translateY(-1px);
 		box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
 	}
 
@@ -937,6 +996,56 @@
 
 	.sticky {
 		position: sticky;
+		background: var(--color-terminal);
 		backdrop-filter: blur(8px);
+	}
+
+	.monetization-setting {
+		background: rgba(0, 0, 0, 0.3);
+		padding: 1rem;
+		border-radius: 0.5rem;
+		border: 2px solid var(--color-crt);
+	}
+
+	.category-card {
+		background: rgba(0, 0, 0, 0.2);
+		transition: all 0.2s ease-in-out;
+	}
+
+	.category-card:hover {
+		transform: translateY(-1px);
+	}
+
+	.feature-tag {
+		@apply text-xs px-2 py-1 border border-[var(--color-crt)] rounded text-[var(--color-crt)];
+	}
+
+	.section-title {
+		@apply text-xl font-semibold mb-2 text-[var(--color-crt)];
+	}
+
+	.progress-item,
+	.impact-item {
+		@apply flex items-center justify-between text-lg;
+	}
+
+	.cost-item {
+		@apply flex items-center gap-4 text-lg;
+	}
+
+	.progress-bar {
+		@apply w-24 h-2 bg-black/30 rounded-full overflow-hidden ml-2;
+	}
+
+	.progress-fill {
+		@apply h-full transition-all duration-300;
+	}
+
+	.employee-tiles-container {
+		position: fixed;
+		top: 0;
+		left: 0;
+		pointer-events: none;
+		z-index: -1;
 	}
 </style>

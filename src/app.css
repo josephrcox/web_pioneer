@@ -131,9 +131,11 @@ h1 {
 }
 
 #app {
-	max-width: 1280px;
+	max-width: 1500px;
 	margin: 0 auto;
-	padding: 2rem;
+	padding-top: 1rem;
+	/* select none */
+	@apply select-none;
 }
 
 .title {
@@ -162,4 +164,52 @@ h1 {
 	border-color: var(--color-crt);
 	outline: none;
 	box-shadow: 0 0 0 2px rgba(168, 255, 0, 0.2);
+}
+
+.stat-compact {
+	@apply flex flex-col;
+}
+
+.stat-compact .stat-title {
+	@apply text-sm opacity-70;
+}
+
+.stat-compact .stat-value {
+	@apply text-2xl font-bold;
+}
+
+.stat-compact .stat-desc {
+	@apply text-sm flex items-center gap-1;
+}
+
+.stat-large {
+	@apply flex flex-col items-center text-center;
+}
+
+.stat-large .stat-title {
+	@apply text-lg opacity-70;
+}
+
+.stat-large .stat-value {
+	@apply text-4xl font-bold my-1;
+}
+
+.stat-large .stat-desc {
+	@apply text-base flex items-center gap-1;
+}
+
+.stat-huge {
+	@apply flex flex-col items-center text-center;
+}
+
+.stat-huge .stat-title {
+	@apply text-xl opacity-70;
+}
+
+.stat-huge .stat-value {
+	@apply text-3xl font-bold my-2;
+}
+
+.stat-huge .stat-desc {
+	@apply text-lg flex items-center gap-1;
 }

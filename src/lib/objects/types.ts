@@ -4,6 +4,21 @@ export type game = {
 	tick: number; // 0-8
 };
 
+export type investmentOpportunity = {
+	firm: string; // Investment firm name
+	percent: number; // Percent that investor wants
+	valuation: number; // Valuation of the company
+	day: number; // Day they want to invest
+	expires: number; // Day that offer expires
+};
+
+export type investor = {
+	firm: string;
+	percent_owned: number;
+	valuation: number;
+	day_invested: number;
+};
+
 export type website = {
 	id: number;
 	name: string;
@@ -11,19 +26,30 @@ export type website = {
 	money: number;
 	users: number;
 	retention: number;
+	investors: investor[];
 	server_costs: {
 		weekly_spend: number; // minimum 50
-		user_capacity: number; // calculated as weekly_spend * 40
+		user_capacity: number; // calculated as weekly_spend * 56
 	};
 	user_changes: {
 		net_change_today: number;
 		rolling_average: number;
-		daily_history: number[]; // Store last 7 days of changes
+		daily_history: Array<{
+			added: number;
+			removed: number;
+			day: number;
+		}>;
 	};
 	profit_changes: {
 		net_change_today: number;
 		rolling_average: number;
-		daily_history: number[]; // Store last 7 days of changes
+		investor_payout_today: number;
+		daily_history: Array<{
+			gained: number;
+			spent: number;
+			investors_paid: number;
+			day: number;
+		}>;
 	};
 	// Scores start at 0 but work their way up. No maximum. They are compared based on ratios.
 	// For example, if a site has a functionality of 1000 but a reliability of 10,
@@ -39,6 +65,9 @@ export type website = {
 	};
 	employees: employee[];
 	projects: projectRecord[];
+	monetization_config?: MonetizationConfig; // Custom monetization values
+	marketing_config?: MarketingConfig; // Custom marketing values
+	investment_opportunities: investmentOpportunity[];
 };
 
 export type projectRecord = {
@@ -51,6 +80,7 @@ export type projectRecord = {
 	};
 	assignees: number[];
 	completed: boolean;
+	enabled: boolean;
 	rules: {
 		paid_only: boolean;
 		weekly_ad_spend?: number; // Amount to spend on ads per week
@@ -77,12 +107,11 @@ export type employee = {
 };
 
 export enum FEATURE {
-	CORE_WEBSITE = 'core website',
+	CORE = 'core',
+	BUGS = 'bugs',
+	MARKETING = 'marketing',
 	MONETIZATION = 'monetization',
-	SECURITY = 'security',
-	MEDIA = 'media',
-	ENGAGEMENT = 'engagement',
-	USER_EXPERIENCE = 'user experience',
+	UX = 'user experience',
 }
 
 export enum PROJECT_NAME {
@@ -94,10 +123,12 @@ export enum PROJECT_NAME {
 	NEWSPAPER_ADS = 'Newspaper Ads',
 	PROFILE_PICTURES = 'Profile Pictures',
 	BASIC_BUG_FIXES_1 = 'Basic Bug Fixes #1',
-	ADVANCED_BUG_FIXES_1 = 'Advanced Bug Fixes #1',
+	SECURITY_IMPROVEMENTS_1 = 'Security Improvements #1',
+	ADVANCED_BUG_FIXES_1 = 'Automated Testing #1',
 	IMPROVED_SERVERS_1 = 'Improved Servers #1',
 	GEO_LOCATION = 'Geo-location',
-	BROWSE = 'Browse',
+	NEW_USER_ONBOARDING = 'New User Onboarding',
+	BROWSE = 'Browse page',
 	HEARTING = 'Hearting',
 	PRIVATE_MESSAGING = 'Private Messaging',
 	BANNER_ADS = 'Banner Ads',
@@ -115,6 +146,23 @@ export enum PROJECT_NAME {
 	ADVANCED_BUG_FIXES_3 = 'Advanced Bug Fixes #3',
 	IMPROVED_SERVERS_3 = 'Improved Servers #3',
 	AD_FREE = 'Ad-free',
+	DIAL_UP_OPTIMIZATION = 'Dial-up Optimization',
+	BROWSER_COMPATIBILITY = 'Browser Compatibility',
+	CHAT_ROOMS = 'Chat Rooms',
+	PERSONALITY_QUIZ = 'Personality Quiz',
+	CLASSIFIED_ADS = 'Classified Ads',
+	MODERATION_TOOLS = 'Moderation Tools',
+	SECURITY_IMPROVEMENTS_2 = 'Security Improvements #2',
+	RELATIONSHIP_ADVICE = 'Relationship Advice',
+	LOVE_CALCULATOR = 'Love Calculator',
+	TV_INFOMERCIAL = 'Late Night TV Infomercial',
+	RADIO_ADS = 'Radio Advertising Campaign',
+	COMPATIBILITY_HOROSCOPE = 'Compatibility Horoscope',
+	COLLEGE_CAMPUS_CAMPAIGN = 'College Campus Campaign',
+	FIRST_DATE_PLANNER = 'First Date Planner',
+	BASIC_UI_IMPROVEMENTS = 'Basic UI Improvements',
+	USABILITY_TESTING = 'Usability Testing',
+	ADVANCED_UI_OVERHAUL = 'Advanced UI Overhaul',
 }
 
 // Teams can have different projects to work on.
@@ -123,14 +171,10 @@ export type project = {
 	requirements: string;
 	feature: FEATURE;
 	dependencies?: PROJECT_NAME[];
-	is_continuous?: boolean;
 	weekly_costs?: {
 		money: number;
 	};
 	weekly_revenue_per_user?: number;
-	required_roles?: {
-		[key in JOB_TYPE]?: number;
-	};
 	target_score?: keyof website['scores']; // The score this continuous project affects
 	costs: {
 		product: number;
@@ -153,4 +197,11 @@ export type MonetizationConfig = {
 	banner_ad_revenue_per_user_per_week: number;
 	super_heart_revenue_per_user_per_week: number;
 	ad_free_revenue_per_user_per_week: number;
+};
+
+export type MarketingConfig = {
+	newspaper_ads_weekly_spend: number;
+	tv_infomercial_weekly_spend: number;
+	radio_ads_weekly_spend: number;
+	college_campus_weekly_spend: number;
 };

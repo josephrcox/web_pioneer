@@ -3,7 +3,7 @@ import type { game, employee } from './objects/types';
 
 const DEFAULT_SERVER_COSTS = {
 	weekly_spend: 50,
-	user_capacity: 2000, // 50 * 40
+	user_capacity: 2000, // 50 * 56
 };
 
 export const g = writable<game>(
@@ -41,6 +41,7 @@ export function createNewWebsite(name: string): game {
 			users: 0,
 			retention: 0,
 			server_costs: { ...DEFAULT_SERVER_COSTS },
+			investors: [],
 			user_changes: {
 				net_change_today: 0,
 				rolling_average: 0,
@@ -50,6 +51,7 @@ export function createNewWebsite(name: string): game {
 				net_change_today: 0,
 				rolling_average: 0,
 				daily_history: [],
+				investor_payout_today: 0,
 			},
 			scores: {
 				reliability: 0,
@@ -62,6 +64,7 @@ export function createNewWebsite(name: string): game {
 			},
 			employees: [],
 			projects: [],
+			investment_opportunities: [],
 		},
 		tick: 0,
 	};
